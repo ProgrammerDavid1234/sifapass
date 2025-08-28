@@ -10,15 +10,16 @@ import participantRoutes from "./routes/participant.js";
 import eventRoutes from "./routes/eventRoutes.js";
 import planRoutes from "./routes/planRoutes.js";
 import invoiceRoutes from "./routes/invoiceRoutes.js";
-
+import credentialRoutes from "./routes/credentialRoutes.js";
+import certificateRoutes from "./routes/certificateRoutes.js";
 dotenv.config();
 const app = express();
 
 // Middleware
 app.use(cors({
-  origin: ['https://sifapass.onrender.com', 'http://localhost:5000'], // add your URLs
-  methods: ['GET','POST','PUT','DELETE'],
-  credentials: true
+    origin: ['https://sifapass.onrender.com', 'http://localhost:5000'], // add your URLs
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true
 }));
 app.use(express.json());
 
@@ -28,6 +29,10 @@ app.use("/api/participants", participantRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/plans", planRoutes);
 app.use("/api/invoices", invoiceRoutes);
+app.use("/api/credentials", credentialRoutes);
+app.use("/admin/plans", planRoutes);
+app.use("/admin/invoices", invoiceRoutes);
+app.use("/api/certificates", certificateRoutes);
 
 // Dynamic base URL
 const PORT = process.env.PORT || 5000;

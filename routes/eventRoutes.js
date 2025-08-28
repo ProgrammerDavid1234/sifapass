@@ -5,6 +5,8 @@ import {
   getEventById,
   updateEvent,
   deleteEvent,
+  registerViaEvent,
+  shareEvent,
 } from "../controllers/eventController.js";
 import { authenticate } from "../middleware/auth.js";
 const router = express.Router();
@@ -149,5 +151,23 @@ router.put("/:id", authenticate, updateEvent);
  *         description: Event not found
  */
 router.delete("/:id", authenticate, deleteEvent);
+
+/**
+ * @swagger
+ * /api/events/{eventId}/register:
+ *   post:
+ *     summary: Register participant via event link
+ *     tags: [Admin, Participants]
+ */
+router.post("/:eventId/register", authenticate, registerViaEvent);
+
+/**
+ * @swagger
+ * /api/events/{eventId}/share:
+ *   post:
+ *     summary: Share event with participants
+ *     tags: [Admin, Participants]
+ */
+router.post("/:eventId/share", authenticate, shareEvent);
 
 export default router;

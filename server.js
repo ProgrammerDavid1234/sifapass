@@ -25,6 +25,10 @@ app.use("/api/events", eventRoutes);
 app.use("/api/plans", planRoutes);
 app.use("/api/invoices", invoiceRoutes);
 
+// Dynamic Swagger server URL
+const PORT = process.env.PORT || 5000;
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+
 const swaggerOptions = {
     definition: {
         openapi: "3.0.0",
@@ -33,7 +37,7 @@ const swaggerOptions = {
             version: "1.0.0",
             description: "API documentation for Admin and Participants",
         },
-        servers: [{ url: "http://localhost:5000" }],
+        servers: [{ url: BASE_URL }], // ✅ dynamic base URL
         components: {
             securitySchemes: {
                 BearerAuth: {
@@ -43,21 +47,22 @@ const swaggerOptions = {
                 },
             },
         },
-        security: [{ BearerAuth: [] }], // applies globally
+        security: [{ BearerAuth: [] }], // applies JWT globally
     },
-    apis: ["./routes/*.js"], // adjust to your routes path
+    apis: ["./routes/*.js"], 
 };
 
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
+// MongoDB connection
 mongoose
     .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
     .then(() => console.log("✅ MongoDB Atlas connected"))
     .catch((err) => console.error("❌ DB Connection Error:", err));
 
-const PORT = process.env.PORT || 5000;
+// Start server
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📖 Swagger docs at http://localhost:${PORT}/api-docs`);
+    console.log(`🚀 Server running on ${BASE_URL}`);
+    console.log(`📖 Swagger docs at ${BASE_URL}/api-docs`);
 });

@@ -1,5 +1,6 @@
 import express from "express";
 import {
+    createCredential,
     editCredential,
     shareCredential,
     importCredential,
@@ -11,6 +12,9 @@ import {
 
 const router = express.Router();
 import { authenticate } from "../middleware/auth.js";
+import multer from "multer";
+import path from "path";
+
 
 
 /**
@@ -39,7 +43,7 @@ import { authenticate } from "../middleware/auth.js";
  *       200:
  *         description: Credential updated successfully
  */
-router.put("/:id/edit", authenticate,editCredential);
+router.put("/:id/edit", authenticate, editCredential);
 
 /**
  * @swagger
@@ -58,7 +62,7 @@ router.put("/:id/edit", authenticate,editCredential);
  *       200:
  *         description: Credential shared successfully
  */
-router.post("/:id/share", authenticate,shareCredential);
+router.post("/:id/share", authenticate, shareCredential);
 
 /**
  * @swagger
@@ -80,7 +84,7 @@ router.post("/:id/share", authenticate,shareCredential);
  *       201:
  *         description: Credentials imported successfully
  */
-router.post("/import", authenticate,importCredential);
+router.post("/import", authenticate, importCredential);
 
 /**
  * @swagger
@@ -119,7 +123,7 @@ router.get("/template/default", getDefaultTemplate);
  *       200:
  *         description: Credential customized successfully
  */
-router.put("/:id/customize", authenticate,customizeCredential);
+router.put("/:id/customize", authenticate, customizeCredential);
 
 /**
  * @swagger
@@ -149,7 +153,56 @@ router.get("/:id/verify", verifyCredential);
  *     summary: Reconcile participant certificates
  *     tags: [Admin]
  */
-router.post("/reconcile", authenticate,reconcileCertificates);
+router.post("/reconcile", authenticate, reconcileCertificates);
+/**
+ * @swagger
+ * /api/credentials/create:
+ *   post:
+ *     summary: Create Participant Credential (Certificate or Badge)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - participantId
+ *               - eventId
+ *               - title
+ *               - type
+ *               - file
+ *             properties:
+ *               participantId:
+ *                 type: string
+ *               eventId:
+ *                 type: string
+ *               title:
+ *                 type: string
+ *               type:
+ *                 type: string
+ *                 enum: [certificate, badge]
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       201:
+ *         description: Credential created successfully
+ *       400:
+ *         description: Invalid input
+ *       500:
+ *         description: Failed to create credential
+ */
 
+router.post("/create", authenticate, createCredential);
 
+// Store files in the uploads folder
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, "uploads/"),
+    filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
+});
+
+const upload = multer({ storage });
 export default router;

@@ -7,33 +7,44 @@ import crypto from "crypto";
  * Create or Import Credential
  */
 export const createCredential = async (req, res) => {
-    try {
-        const { title, description, data, template } = req.body;
+  try {
+    const { participantId, eventId, title, type } = req.body;
 
-        // Generate blockchain-like hash
-        const blockchainHash = crypto
-            .createHash("sha256")
-            .update(JSON.stringify(data) + Date.now())
-            .digest("hex");
-
-        // Generate QR Code
-        const qrCode = await QRCode.toDataURL(blockchainHash);
-
-        const credential = await Credential.create({
-            userId: req.user.id,
-            title,
-            description,
-            data,
-            template: template || "default",
-            blockchainHash,
-            qrCode,
-        });
-
-        res.status(201).json({ success: true, credential });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+    if (!["certificate", "badge"].includes(type)) {
+      return res.status(400).json({ message: "Invalid type. Must be 'certificate' or 'badge'." });
     }
+
+    // Get downloadLink from uploaded file
+    let downloadLink = "";
+    if (req.file) {
+      downloadLink = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
+    } else {
+      return res.status(400).json({ message: "File is required" });
+    }
+
+    const blockchainHash = crypto
+      .createHash("sha256")
+      .update(JSON.stringify({ participantId, eventId, title, type }) + Date.now())
+      .digest("hex");
+
+    const qrCode = await QRCode.toDataURL(blockchainHash);
+
+    const credential = await Credential.create({
+      participantId,
+      eventId,
+      title,
+      downloadLink,
+      type,
+      blockchainHash,
+      qrCode,
+    });
+
+    res.status(201).json({ message: `${type} created successfully`, credential });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to create credential", error: error.message });
+  }
 };
+
 
 /**
  * Get All Credentials (for user)
@@ -198,22 +209,22 @@ export const importCredential = async (req, res) => {
 };
 // Reconcile certificates
 export const reconcileCertificates = async (req, res) => {
-  try {
-    const { participantId, credentialId } = req.body;
+    try {
+        const { participantId, credentialId } = req.body;
 
-    // check if credential belongs to participant
-    const cred = await Credential.findById(credentialId);
-    if (!cred) return res.status(404).json({ message: "Credential not found" });
+        // check if credential belongs to participant
+        const cred = await Credential.findById(credentialId);
+        if (!cred) return res.status(404).json({ message: "Credential not found" });
 
-    if (String(cred.participant) !== participantId) {
-      cred.participant = participantId;
-      await cred.save();
+        if (String(cred.participant) !== participantId) {
+            cred.participant = participantId;
+            await cred.save();
+        }
+
+        res.json({ message: "Certificate reconciled", credential: cred });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-
-    res.json({ message: "Certificate reconciled", credential: cred });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
 };
 
 export default {

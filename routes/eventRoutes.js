@@ -64,7 +64,7 @@ router.post("/", authenticate, createEvent);
  * /api/events:
  *   get:
  *     summary: Get all events
- *     tags: [Participants]
+ *     tags: [Participants, Admin]
  *     responses:
  *       200:
  *         description: List of events

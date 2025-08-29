@@ -10,17 +10,19 @@ export const createCredential = async (req, res) => {
   try {
     const { participantId, eventId, title, type } = req.body;
 
+    if (!participantId || !eventId || !title || !type) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
     if (!["certificate", "badge"].includes(type)) {
       return res.status(400).json({ message: "Invalid type. Must be 'certificate' or 'badge'." });
     }
 
-    // Get downloadLink from uploaded file
-    let downloadLink = "";
-    if (req.file) {
-      downloadLink = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
-    } else {
-      return res.status(400).json({ message: "File is required" });
+    if (!req.file) {
+      return res.status(400).json({ message: "File upload is required" });
     }
+
+    const downloadLink = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
 
     const blockchainHash = crypto
       .createHash("sha256")
@@ -33,8 +35,8 @@ export const createCredential = async (req, res) => {
       participantId,
       eventId,
       title,
-      downloadLink,
       type,
+      downloadLink,
       blockchainHash,
       qrCode,
     });

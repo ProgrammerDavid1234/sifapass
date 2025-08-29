@@ -33,6 +33,7 @@ app.use("/api/credentials", credentialRoutes);
 app.use("/admin/plans", planRoutes);
 app.use("/admin/invoices", invoiceRoutes);
 app.use("/api/certificates", certificateRoutes);
+app.use("/uploads", express.static("uploads"));
 
 // Dynamic base URL
 const PORT = process.env.PORT || 5000;

@@ -14,6 +14,8 @@ const router = express.Router();
 import { authenticate } from "../middleware/auth.js";
 import multer from "multer";
 import path from "path";
+import upload from "../middleware/upload.js";
+
 
 
 
@@ -196,13 +198,6 @@ router.post("/reconcile", authenticate, reconcileCertificates);
  *         description: Failed to create credential
  */
 
-router.post("/create", authenticate, createCredential);
+router.post("/create", authenticate, upload.single("file"), createCredential);
 
-// Store files in the uploads folder
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, "uploads/"),
-    filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
-});
-
-const upload = multer({ storage });
 export default router;

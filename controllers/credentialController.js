@@ -8,6 +8,7 @@ import crypto from "crypto";
  */
 export const createCredential = async (req, res) => {
   try {
+    // req.body will contain all text fields as strings
     const { participantId, eventId, title, type } = req.body;
 
     if (!participantId || !eventId || !title || !type) {
@@ -15,7 +16,7 @@ export const createCredential = async (req, res) => {
     }
 
     if (!["certificate", "badge"].includes(type)) {
-      return res.status(400).json({ message: "Invalid type. Must be 'certificate' or 'badge'." });
+      return res.status(400).json({ message: "Type must be 'certificate' or 'badge'" });
     }
 
     if (!req.file) {
@@ -46,6 +47,7 @@ export const createCredential = async (req, res) => {
     res.status(500).json({ message: "Failed to create credential", error: error.message });
   }
 };
+
 
 
 /**

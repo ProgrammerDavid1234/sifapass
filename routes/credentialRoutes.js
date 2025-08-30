@@ -162,8 +162,6 @@ router.post("/reconcile", authenticate, reconcileCertificates);
  *   post:
  *     summary: Create Participant Credential (Certificate or Badge)
  *     tags: [Admin]
- *     security:
- *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:

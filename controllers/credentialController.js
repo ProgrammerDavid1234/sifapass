@@ -2,50 +2,80 @@
 import Credential from "../models/Credentials.js";
 import QRCode from "qrcode";
 import crypto from "crypto";
-
+import { v2 as cloudinary } from "cloudinary";
 /**
  * Create or Import Credential
  */
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
 export const createCredential = async (req, res) => {
-  try {
-    // req.body will contain all text fields as strings
-    const { participantId, eventId, title, type } = req.body;
+    try {
+        const { participantId, eventId, title, type } = req.body;
 
-    if (!participantId || !eventId || !title || !type) {
-      return res.status(400).json({ message: "Missing required fields" });
+        // Validate required fields
+        if (!participantId || !eventId || !title || !type) {
+            return res.status(400).json({ message: "Missing required fields" });
+        }
+
+        if (!["certificate", "badge"].includes(type)) {
+            return res
+                .status(400)
+                .json({ message: "Type must be 'certificate' or 'badge'" });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ message: "File upload is required" });
+        }
+
+        // Upload to Cloudinary using buffer
+        const uploadResult = await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+                { resource_type: "auto", folder: "credentials" },
+                (error, result) => {
+                    if (error) return reject(error);
+                    resolve(result);
+                }
+            );
+            stream.end(req.file.buffer);
+        });
+
+        const downloadLink = uploadResult.secure_url;
+
+        // Generate blockchain hash
+        const blockchainHash = crypto
+            .createHash("sha256")
+            .update(
+                JSON.stringify({ participantId, eventId, title, type }) + Date.now()
+            )
+            .digest("hex");
+
+        // Generate QR code from hash
+        const qrCode = await QRCode.toDataURL(blockchainHash);
+
+        // Save to DB
+        const credential = await Credential.create({
+            participantId,
+            eventId,
+            title,
+            type,
+            downloadLink,
+            blockchainHash,
+            qrCode,
+        });
+
+        res
+            .status(201)
+            .json({ message: `${type} created successfully`, credential });
+    } catch (error) {
+        console.error("CreateCredential Error:", error);
+        res
+            .status(500)
+            .json({ message: "Failed to create credential", error: error.message });
     }
-
-    if (!["certificate", "badge"].includes(type)) {
-      return res.status(400).json({ message: "Type must be 'certificate' or 'badge'" });
-    }
-
-    if (!req.file) {
-      return res.status(400).json({ message: "File upload is required" });
-    }
-
-    const downloadLink = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
-
-    const blockchainHash = crypto
-      .createHash("sha256")
-      .update(JSON.stringify({ participantId, eventId, title, type }) + Date.now())
-      .digest("hex");
-
-    const qrCode = await QRCode.toDataURL(blockchainHash);
-
-    const credential = await Credential.create({
-      participantId,
-      eventId,
-      title,
-      type,
-      downloadLink,
-      blockchainHash,
-      qrCode,
-    });
-
-    res.status(201).json({ message: `${type} created successfully`, credential });
-  } catch (error) {
-    res.status(500).json({ message: "Failed to create credential", error: error.message });
-  }
 };
 
 

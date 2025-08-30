@@ -12,6 +12,7 @@ import planRoutes from "./routes/planRoutes.js";
 import invoiceRoutes from "./routes/invoiceRoutes.js";
 import credentialRoutes from "./routes/credentialRoutes.js";
 import certificateRoutes from "./routes/certificateRoutes.js";
+import organizationRoutes from "./routes/Organization.js";
 dotenv.config();
 const app = express();
 
@@ -34,6 +35,7 @@ app.use("/admin/plans", planRoutes);
 app.use("/admin/invoices", invoiceRoutes);
 app.use("/api/certificates", certificateRoutes);
 app.use("/uploads", express.static("uploads"));
+app.use("/api/organization", organizationRoutes);
 
 // Dynamic base URL
 const PORT = process.env.PORT || 5000;

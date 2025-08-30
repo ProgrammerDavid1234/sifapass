@@ -49,7 +49,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 
 /**
  * @swagger
- * /organization/create:
+ * /api/organization/create:
  *   post:
  *     summary: Create a new organization
  *     tags: [Organization]

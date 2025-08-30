@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import bcrypt from "bcryptjs";   // if you’re using ES Modules
 
 // ------------------- Team Member Schema -------------------
 const teamMemberSchema = new mongoose.Schema({

@@ -1,12 +1,11 @@
 import mongoose from "mongoose";
-import bcrypt from "bcrypt";
 
 // ... your schema definition here ...
 const organizationSchema = new mongoose.Schema({
   name: { type: String, required: true, unique: true },
   location: { type: String, required: true },
   email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
+  password: { type: String, required: true },  // stored as plain text now
   maxUsers: { type: Number, default: 10 },
   active: { type: Boolean, default: true },
   subscriptionPlan: { type: mongoose.Schema.Types.ObjectId, ref: "Plan" },
@@ -23,14 +22,10 @@ const organizationSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 }, { timestamps: true });
 
-// hash password before saving
-organizationSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-  this.password = await bcrypt.hash(this.password, 10);
-  next();
-});
+// ✅ Removed bcrypt hashing logic
 
-// ✅ Avoid overwrite error
-const Organization = mongoose.models.Organization || mongoose.model("Organization", organizationSchema);
+// Avoid overwrite error
+const Organization =
+  mongoose.models.Organization || mongoose.model("Organization", organizationSchema);
 
 export default Organization;

@@ -7,6 +7,7 @@ import {
   deleteEvent,
   registerViaEvent,
   shareEvent,
+  getAdminEvents,
 } from "../controllers/eventController.js";
 import { authenticate } from "../middleware/auth.js";
 const router = express.Router();
@@ -72,28 +73,6 @@ router.post("/", authenticate, createEvent);
  *         description: Server error
  */
 router.get("/", getAllEvents);
-
-/**
- * @swagger
- * /api/events/{id}:
- *   get:
- *     summary: Get event by ID
- *     tags: [Participants]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: Event ID
- *     responses:
- *       200:
- *         description: Event details
- *       404:
- *         description: Event not found
- */
-router.get("/:id", getEventById);
-
 /**
  * @swagger
  * /api/events/{id}:
@@ -218,5 +197,27 @@ router.post("/:eventId/share", authenticate, shareEvent);
  *         description: Server error
  */
 router.get("/my-events", authenticate, getAdminEvents);
+
+/**
+ * @swagger
+ * /api/events/{id}:
+ *   get:
+ *     summary: Get event by ID
+ *     tags: [Participants]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Event ID
+ *     responses:
+ *       200:
+ *         description: Event details
+ *       404:
+ *         description: Event not found
+ */
+router.get("/:id", getEventById);
+
 
 export default router;

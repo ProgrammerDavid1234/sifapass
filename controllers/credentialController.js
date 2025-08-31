@@ -7,9 +7,9 @@ import { v2 as cloudinary } from "cloudinary";
  * Create or Import Credential
  */
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
 export const createCredential = async (req, res) => {
@@ -91,7 +91,20 @@ export const getCredentials = async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+export const getCredentialStats = async (req, res) => {
+    try {
+        const totalCredentials = await Credential.countDocuments();
 
+        // Group by event
+        const perEvent = await Credential.aggregate([
+            { $group: { _id: "$eventId", count: { $sum: 1 } } }
+        ]);
+
+        res.json({ totalCredentials, perEvent });
+    } catch (err) {
+        res.status(500).json({ message: "Failed to fetch stats", error: err.message });
+    }
+};
 /**
  * Edit Credential
  */

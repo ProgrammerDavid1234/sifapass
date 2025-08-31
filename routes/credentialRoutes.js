@@ -8,6 +8,7 @@ import {
     customizeCredential,
     verifyCredential,
     reconcileCertificates,
+    getCredentialStats
 } from "../controllers/credentialController.js";
 
 const router = express.Router();
@@ -197,5 +198,19 @@ router.post("/reconcile", authenticate, reconcileCertificates);
  */
 
 router.post("/create", authenticate, upload.single("file"), createCredential);
+
+/**
+ * @swagger
+ * /api/credentials/stats:
+ *   get:
+ *     summary: Get credential statistics
+ *     tags: [Admin]
+ *     responses:
+ *       200:
+ *         description: Returns credential statistics
+ *       500:
+ *         description: Server error    
+ */
+router.get("/stats", authenticate, getCredentialStats);
 
 export default router;

@@ -1,27 +1,44 @@
 import Event from "../models/Event.js";
 
-// Create Event
 export const createEvent = async (req, res) => {
     try {
-        const { title, description, startDate, endDate, maxParticipants } = req.body;
-        const event = new Event({ title, description, startDate, endDate, maxParticipants });
+        const { title, description, startDate, endDate, maxParticipants, location } = req.body;
+
+        const event = new Event({
+            title,
+            description,
+            startDate,
+            endDate,
+            maxParticipants,
+            location,
+            createdBy: req.user.id, // save admin ID
+        });
+
         await event.save();
         res.status(201).json({ message: "Event created successfully", event });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 };
-
 // Get All Events
 export const getAllEvents = async (req, res) => {
     try {
-        const events = await Event.find();
-        res.json(events);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
+        let events;
+
+        if (req.user.role === "admin") {
+            // Admin: only events created by this admin
+            events = await Event.find({ createdBy: req.user.id });
+        } else {
+            // Participant: see all events
+            events = await Event.find();
+        }
+
+        res.status(200).json(events);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Server error" });
     }
 };
-
 // Get Single Event
 export const getEventById = async (req, res) => {
     try {

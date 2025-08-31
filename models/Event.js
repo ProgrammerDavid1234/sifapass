@@ -9,6 +9,7 @@ const eventSchema = new mongoose.Schema({
   participants: [{ type: mongoose.Schema.Types.ObjectId, ref: "Participant" }],
   createdAt: { type: Date, default: Date.now },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, // admin ID
+  location: { type: String },   // <-- add this
 
 });
 

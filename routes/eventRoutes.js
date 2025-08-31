@@ -170,4 +170,53 @@ router.post("/:eventId/register", authenticate, registerViaEvent);
  */
 router.post("/:eventId/share", authenticate, shareEvent);
 
+/**
+ * @swagger
+ * /api/events/my-events:
+ *   get:
+ *     summary: Get all events created by the authenticated admin
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: [] 
+ *     responses:
+ *       200:
+ *         description: List of events created by the admin
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 count:
+ *                   type: integer
+ *                   example: 5
+ *                 events:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       _id:
+ *                         type: string
+ *                         example: "64f1b0f5c9d3a4a9f7b6c123"
+ *                       title:
+ *                         type: string
+ *                         example: "Tech Innovation Summit 2024"
+ *                       description:
+ *                         type: string
+ *                         example: "Company-wide tech meetup"
+ *                       date:
+ *                         type: string
+ *                         example: "2025-09-01"
+ *                       location:
+ *                         type: string
+ *                         example: "Lagos, Nigeria"
+ *                       createdBy:
+ *                         type: string
+ *                         example: "64f0ff0a9c3d8a1234567890"
+ *       401:
+ *         description: Unauthorized – user not authenticated
+ *       500:
+ *         description: Server error
+ */
+router.get("/my-events", authenticate, getAdminEvents);
+
 export default router;

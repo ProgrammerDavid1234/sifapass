@@ -128,6 +128,17 @@ export const shareEvent = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+// Get events created by the authenticated admin
+export const getAdminEvents = async (req, res) => {
+    try {
+        const adminId = req.user.id;
+        const events = await Event.find({ createdBy: adminId });
+        res.status(200).json({ count: events.length, events });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
 export default {
     createEvent,
     getAllEvents,

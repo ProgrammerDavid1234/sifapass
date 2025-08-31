@@ -155,8 +155,6 @@ router.post("/:eventId/share", authenticate, shareEvent);
  *   get:
  *     summary: Get all events created by the authenticated admin
  *     tags: [Admin]
- *     security:
- *       - bearerAuth: [] 
  *     responses:
  *       200:
  *         description: List of events created by the admin

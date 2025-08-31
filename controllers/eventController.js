@@ -132,7 +132,10 @@ export const shareEvent = async (req, res) => {
 export const getAdminEvents = async (req, res) => {
     try {
         const adminId = req.user.id;
-        const events = await Event.find({ createdBy: adminId });
+
+        const events = await Event.find({ createdBy: adminId })
+            .select("title description startDate endDate maxParticipants participants createdBy createdAt location");
+
         res.status(200).json({ count: events.length, events });
     } catch (error) {
         res.status(500).json({ error: error.message });

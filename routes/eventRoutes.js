@@ -38,6 +38,8 @@ const router = express.Router();
  *               - description
  *               - date
  *               - location
+ *               - startDate
+ *               - endDate
  *             properties:
  *               title:
  *                 type: string
@@ -49,6 +51,14 @@ const router = express.Router();
  *                 type: string
  *                 format: date
  *                 example: 2025-09-01
+ *               startDate:
+ *                 type: string
+ *                 format: date
+ *                 example: 2025-09-01
+ *               endDate:
+ *                 type: string
+ *                 format: date
+ *                 example: 2025-09-03
  *               location:
  *                 type: string
  *                 example: Lagos, Nigeria

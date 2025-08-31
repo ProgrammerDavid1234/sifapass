@@ -324,7 +324,7 @@ router.get("/:id", async (req, res) => {
  *       200:
  *         description: Participant updated
  */
-router.put("/:id", authenticate,async (req, res) => {
+router.put("/:id", authenticate, async (req, res) => {
     try {
         const participant = await Participant.findByIdAndUpdate(
             req.params.id,
@@ -380,7 +380,7 @@ router.get("/export/all", async (req, res) => {
  *       200:
  *         description: Event shared successfully
  */
-router.post("/share", authenticate,async (req, res) => {
+router.post("/share", authenticate, async (req, res) => {
     try {
         const { eventId, participantIds } = req.body;
         await Participant.updateMany(
@@ -414,7 +414,7 @@ router.post("/share", authenticate,async (req, res) => {
  *       200:
  *         description: Participants reconciled successfully
  */
-router.put("/reconcile", authenticate,async (req, res) => {
+router.put("/reconcile", authenticate, async (req, res) => {
     try {
         const { participantIds } = req.body;
         await Participant.updateMany(
@@ -497,7 +497,7 @@ router.get("/participants/:id/credentials/:credId/download", async (req, res) =>
  *     summary: Share a credential
  *     tags: [Participants]
  */
-router.post("/participants/:id/credentials/:credId/share", authenticate,async (req, res) => {
+router.post("/participants/:id/credentials/:credId/share", authenticate, async (req, res) => {
     try {
         const { email } = req.body;
         // TODO: Implement email sending
@@ -528,7 +528,7 @@ router.get("/participants/:id/settings", async (req, res) => {
     }
 });
 
-router.put("/participants/:id/settings", authenticate,async (req, res) => {
+router.put("/participants/:id/settings", authenticate, async (req, res) => {
     try {
         const updated = await Participant.findByIdAndUpdate(
             req.params.id,
@@ -581,7 +581,7 @@ router.get("/participants/:id/events/:eventId", async (req, res) => {
  *     summary: Interact with event
  *     tags: [Participants]
  */
-router.post("/participants/:id/events/:eventId/interact", authenticate,async (req, res) => {
+router.post("/participants/:id/events/:eventId/interact", authenticate, async (req, res) => {
     try {
         const { action, comment } = req.body;
         // TODO: Save to DB
@@ -610,5 +610,59 @@ router.post("/participants/:id/events/:eventId/interact", authenticate,async (re
  *         description: Failed to export participants
  */
 router.get("/export/all", exportParticipants);
+/**
+ * @swagger
+ * /api/participants/{participantId}/events/{eventId}/register:
+ *   post:
+ *     summary: Register participant for an event
+ *     tags: [Participants]
+ *     parameters:
+ *       - in: path
+ *         name: participantId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Participant ID
+ *       - in: path
+ *         name: eventId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Event ID
+ *     responses:
+ *       200:
+ *         description: Successfully registered for event
+ *       400:
+ *         description: Already registered
+ */
+router.post("/:participantId/events/:eventId/register", authenticate, async (req, res) => {
+    try {
+        const { participantId, eventId } = req.params;
+
+        const participant = await Participant.findById(participantId);
+        const event = await Event.findById(eventId);
+
+        if (!participant || !event) {
+            return res.status(404).json({ message: "Participant or Event not found" });
+        }
+
+        // Check if already registered
+        if (event.participants.includes(participantId)) {
+            return res.status(400).json({ message: "Already registered for this event" });
+        }
+
+        // Add participant to event
+        event.participants.push(participantId);
+        await event.save();
+
+        // Add event to participant
+        participant.events.push(eventId);
+        await participant.save();
+
+        res.json({ message: "Successfully registered for event" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 export default router;

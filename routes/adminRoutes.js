@@ -39,10 +39,10 @@ import { authenticate } from "../middleware/auth.js";
  *                 example: My Company
  *               email:
  *                 type: string
- *                 example: admin@company.com
+ *                 example: olonadenifemi@gmail.com
  *               password:
  *                 type: string
- *                 example: MySecret123
+ *                 example: password
  *     responses:
  *       201:
  *         description: Admin registered successfully

@@ -310,50 +310,10 @@ router.get("/:id", getEventById);
  *                       type: array
  *                       items:
  *                         $ref: '#/components/schemas/EventWithStats'
- *             examples:
- *               success:
- *                 summary: Successful response
- *                 value:
- *                   success: true
- *                   totalEvents: 3
- *                   events:
- *                     - _id: "64f1b0f5c9d3a4a9f7b6c123"
- *                       title: "Tech Innovation Summit 2024"
- *                       eventCode: "EVT-2024-001"
- *                       category: "Technology"
- *                       startDate: "2024-04-15T09:00:00Z"
- *                       endDate: "2024-04-15T17:00:00Z"
- *                       location: "Lagos Conference Center"
- *                       participantCount: 245
- *                       credentialsIssued: 189
- *                       status: "active"
- *                       registrationLink: "https://sifapass.vercel.app/events/64f1b0f5c9d3a4a9f7b6c123/register"
  *       401:
  *         description: Unauthorized - user not authenticated
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: false
- *                 message:
- *                   type: string
- *                   example: "Unauthorized"
  *       500:
  *         description: Server error
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: false
- *                 message:
- *                   type: string
- *                   example: "Failed to fetch events with credential statistics"
  */
 router.get("/dashboard/credential-management", authenticate, getEventsWithCredentialStats);
 

@@ -18,7 +18,7 @@ const app = express();
 
 // Middleware
 app.use(cors({
-    origin: ['https://sifapass.onrender.com', 'http://localhost:5000', 'http://localhost:8080', 'https://sifapass-eta.vercel.app'], // add your URLs
+    origin: ['https://sifapass.onrender.com', 'http://localhost:5000', 'http://localhost:8080', 'https://sifapass-eta.vercel.app', 'https://sifapass.vercel.app'], // add your URLs
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
 }));

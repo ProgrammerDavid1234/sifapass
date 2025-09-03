@@ -1,4 +1,6 @@
 import Event from "../models/Event.js";
+import Participant from "../models/Participant.js";
+import Credential from "../models/Credentials.js"; // Assuming you have a Credential model
 
 export const createEvent = async (req, res) => {
     try {
@@ -139,6 +141,182 @@ export const getAdminEvents = async (req, res) => {
         res.status(200).json({ count: events.length, events });
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+};
+
+export const getEventsWithCredentialStats = async (req, res) => {
+    try {
+        const adminId = req.user.id;
+
+        // Get all events created by this admin
+        const events = await Event.find({ createdBy: adminId })
+            .populate('participants', 'fullName email')
+            .select('title description startDate endDate location participants createdAt eventCode category')
+            .sort({ startDate: -1 });
+
+        // Process each event to add credential statistics and status
+        const eventsWithStats = await Promise.all(events.map(async (event) => {
+            const participantCount = event.participants.length;
+            
+            // Count credentials issued for this event's participants
+            const credentialCount = await Credential.countDocuments({
+                eventId: event._id,
+                status: 'issued'
+            });
+
+            // Determine event status
+            const now = new Date();
+            const eventStart = new Date(event.startDate);
+            const eventEnd = event.endDate ? new Date(event.endDate) : eventStart;
+            
+            let status = 'upcoming';
+            if (now >= eventStart && now <= eventEnd) {
+                status = 'active';
+            } else if (now > eventEnd) {
+                status = 'completed';
+            }
+
+            return {
+                _id: event._id,
+                title: event.title,
+                eventCode: event.eventCode || `EVT-${new Date(event.createdAt).getFullYear()}-${String(event._id).slice(-3).toUpperCase()}`,
+                category: event.category || 'General',
+                startDate: event.startDate,
+                endDate: event.endDate,
+                location: event.location,
+                participantCount,
+                credentialsIssued: credentialCount,
+                status,
+                registrationLink: `${process.env.FRONTEND_URL || 'https://sifapass.vercel.app'}/events/${event._id}/register`
+            };
+        }));
+
+        // Group by status
+        const groupedEvents = {
+            active: eventsWithStats.filter(event => event.status === 'active'),
+            completed: eventsWithStats.filter(event => event.status === 'completed'),
+            upcoming: eventsWithStats.filter(event => event.status === 'upcoming')
+        };
+
+        res.status(200).json({
+            success: true,
+            totalEvents: eventsWithStats.length,
+            events: eventsWithStats,
+            groupedEvents
+        });
+
+    } catch (error) {
+        console.error('Error fetching events with credential stats:', error);
+        res.status(500).json({ 
+            success: false,
+            message: 'Failed to fetch events with credential statistics',
+            error: error.message 
+        });
+    }
+};
+
+// Get specific event with detailed participant and credential info
+export const getEventWithParticipants = async (req, res) => {
+    try {
+        const { eventId } = req.params;
+        const adminId = req.user.id;
+
+        const event = await Event.findOne({ _id: eventId, createdBy: adminId })
+            .populate({
+                path: 'participants',
+                select: 'fullName email createdAt'
+            });
+
+        if (!event) {
+            return res.status(404).json({ 
+                success: false,
+                message: 'Event not found or unauthorized' 
+            });
+        }
+
+        // Get credential information for each participant
+        const participantsWithCredentials = await Promise.all(
+            event.participants.map(async (participant) => {
+                const credentials = await Credential.find({
+                    participantId: participant._id,
+                    eventId: event._id
+                }).select('status issuedAt credentialType');
+
+                return {
+                    _id: participant._id,
+                    fullName: participant.fullName,
+                    email: participant.email,
+                    registeredAt: participant.createdAt,
+                    credentials: credentials,
+                    hasCredential: credentials.length > 0
+                };
+            })
+        );
+
+        const credentialStats = {
+            total: event.participants.length,
+            issued: participantsWithCredentials.filter(p => p.hasCredential).length,
+            pending: participantsWithCredentials.filter(p => !p.hasCredential).length
+        };
+
+        res.status(200).json({
+            success: true,
+            event: {
+                _id: event._id,
+                title: event.title,
+                description: event.description,
+                startDate: event.startDate,
+                endDate: event.endDate,
+                location: event.location,
+                eventCode: event.eventCode || `EVT-${new Date(event.createdAt).getFullYear()}-${String(event._id).slice(-3).toUpperCase()}`,
+                registrationLink: `${process.env.FRONTEND_URL || 'https://sifapass.vercel.app'}/events/${event._id}/register`
+            },
+            participants: participantsWithCredentials,
+            credentialStats
+        });
+
+    } catch (error) {
+        console.error('Error fetching event participants:', error);
+        res.status(500).json({ 
+            success: false,
+            message: 'Failed to fetch event participants',
+            error: error.message 
+        });
+    }
+};
+
+// Generate registration link
+export const getRegistrationLink = async (req, res) => {
+    try {
+        const { eventId } = req.params;
+        const adminId = req.user.id;
+
+        const event = await Event.findOne({ _id: eventId, createdBy: adminId });
+        
+        if (!event) {
+            return res.status(404).json({ 
+                success: false,
+                message: 'Event not found or unauthorized' 
+            });
+        }
+
+        const registrationLink = `${process.env.FRONTEND_URL || 'https://sifapass.vercel.app'}/events/${eventId}/register`;
+
+        res.status(200).json({
+            success: true,
+            eventId: event._id,
+            eventTitle: event.title,
+            registrationLink,
+            qrCode: `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(registrationLink)}`
+        });
+
+    } catch (error) {
+        console.error('Error generating registration link:', error);
+        res.status(500).json({ 
+            success: false,
+            message: 'Failed to generate registration link',
+            error: error.message 
+        });
     }
 };
 

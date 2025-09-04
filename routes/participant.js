@@ -519,7 +519,7 @@ router.get("/participants/dashboard/:id", async (req, res) => {
  *                   type: string
  *                   example: "Internal server error"
  */
-router.get("/participants/:id/credentials", async (req, res) => {
+router.get("/:id/credentials", async (req, res) => {
     try {
         const creds = await Credential.find({ participant: req.params.id });
         if (!creds || creds.length === 0) {

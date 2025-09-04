@@ -317,6 +317,8 @@ router.get("/:id", getEventById);
  */
 router.get("/dashboard/credential-management", authenticate, getEventsWithCredentialStats);
 
+
+
 /**
  * @swagger
  * /api/events/{eventId}/participants:

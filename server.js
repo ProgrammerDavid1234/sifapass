@@ -1,6 +1,7 @@
 import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
+dotenv.config();
 import cors from "cors";
 import swaggerUi from "swagger-ui-express";
 import swaggerJsdoc from "swagger-jsdoc";
@@ -13,7 +14,6 @@ import invoiceRoutes from "./routes/invoiceRoutes.js";
 import credentialRoutes from "./routes/credentialRoutes.js";
 import certificateRoutes from "./routes/certificateRoutes.js";
 import organizationRoutes from "./routes/Organization.js";
-dotenv.config();
 const app = express();
 
 // Middleware

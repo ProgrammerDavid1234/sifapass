@@ -7,15 +7,18 @@ import nodemailer from "nodemailer";
 
 // Configure nodemailer (you'll need to set up your email service)
 // import nodemailer from "nodemailer";
+console.log("Loaded EMAIL_USER:", process.env.EMAIL_USER);
+console.log("Loaded EMAIL_PASS exists:", !!process.env.EMAIL_PASS);
 
 const transporter = nodemailer.createTransport({
-  service: "gmail", // or use host, port, secure
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
   auth: {
-    user: process.env.EMAIL_USER, // your email
-    pass: process.env.EMAIL_PASS  // your app password
-  }
+    user: "certomehq@gmail.com",
+    pass: "jiayxsekzbcwjcoa", // your app password
+  },
 });
-
 // REGISTER ADMIN (now sends verification email)
 export const registerAdmin = async (req, res) => {
   try {
@@ -25,7 +28,7 @@ export const registerAdmin = async (req, res) => {
     if (adminExists) return res.status(400).json({ msg: "Admin already exists" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    
+
     // Generate verification token
     const verificationToken = crypto.randomBytes(32).toString('hex');
     const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
@@ -44,9 +47,9 @@ export const registerAdmin = async (req, res) => {
 
     // Send verification email
     const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
-    
+
     const mailOptions = {
-      from: process.env.EMAIL_USER,
+      from: "certomehq@gmail.com", // same as transporter
       to: email,
       subject: 'Verify Your Admin Account',
       html: `
@@ -74,7 +77,7 @@ export const registerAdmin = async (req, res) => {
 
     await transporter.sendMail(mailOptions);
 
-    res.status(201).json({ 
+    res.status(201).json({
       msg: "Admin account created successfully. Please check your email to verify your account.",
       emailSent: true
     });
@@ -100,8 +103,8 @@ export const verifyEmail = async (req, res) => {
     });
 
     if (!admin) {
-      return res.status(400).json({ 
-        msg: "Invalid or expired verification token" 
+      return res.status(400).json({
+        msg: "Invalid or expired verification token"
       });
     }
 
@@ -111,7 +114,7 @@ export const verifyEmail = async (req, res) => {
     admin.verificationTokenExpires = undefined;
     await admin.save();
 
-    res.json({ 
+    res.json({
       msg: "Email verified successfully. You can now login to your account.",
       verified: true
     });
@@ -146,9 +149,9 @@ export const resendVerificationEmail = async (req, res) => {
 
     // Send verification email
     const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
-    
+
     const mailOptions = {
-      from: process.env.EMAIL_USER,
+      from: "certomehq@gmail.com", // same as transporter
       to: email,
       subject: 'Verify Your Admin Account - Resent',
       html: `
@@ -176,7 +179,7 @@ export const resendVerificationEmail = async (req, res) => {
 
     await transporter.sendMail(mailOptions);
 
-    res.json({ 
+    res.json({
       msg: "Verification email sent successfully. Please check your email.",
       emailSent: true
     });
@@ -197,7 +200,7 @@ export const loginAdmin = async (req, res) => {
 
     // Check if email is verified
     if (!admin.isVerified) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         msg: "Please verify your email before logging in",
         emailNotVerified: true
       });
@@ -206,8 +209,8 @@ export const loginAdmin = async (req, res) => {
     const isMatch = await bcrypt.compare(password, admin.password);
     if (!isMatch) return res.status(400).json({ msg: "Invalid credentials" });
 
-    const token = jwt.sign({ id: admin._id }, process.env.JWT_SECRET, { 
-      expiresIn: "1h" 
+    const token = jwt.sign({ id: admin._id }, process.env.JWT_SECRET, {
+      expiresIn: "1h"
     });
 
     res.json({

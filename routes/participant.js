@@ -460,11 +460,71 @@ router.get("/participants/dashboard/:id", async (req, res) => {
  * /api/participants/{id}/credentials:
  *   get:
  *     summary: Get participant credentials
+ *     description: Retrieve all credentials (certificates, badges, etc.) issued to a participant using their ID.
  *     tags: [Participants]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         description: The participant's unique ID
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: A list of credentials associated with the participant
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: string
+ *                     example: "64eafbc52171d2e546be8738"
+ *                   name:
+ *                     type: string
+ *                     example: "Certificate of Completion"
+ *                   type:
+ *                     type: string
+ *                     example: "Certificate"
+ *                   event:
+ *                     type: string
+ *                     example: "Tech Innovation Summit 2025"
+ *                   issueDate:
+ *                     type: string
+ *                     format: date-time
+ *                     example: "2025-09-04T09:00:00.000Z"
+ *                   status:
+ *                     type: string
+ *                     example: "Issued"
+ *       404:
+ *         description: Participant not found or no credentials available
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: "No credentials found for this participant"
+ *       500:
+ *         description: Server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: "Internal server error"
  */
 router.get("/participants/:id/credentials", async (req, res) => {
     try {
         const creds = await Credential.find({ participant: req.params.id });
+        if (!creds || creds.length === 0) {
+            return res.status(404).json({ message: "No credentials found for this participant" });
+        }
         res.json(creds);
     } catch (err) {
         res.status(500).json({ error: err.message });

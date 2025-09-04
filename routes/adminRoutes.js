@@ -1,5 +1,5 @@
 import express from "express";
-import { registerAdmin, loginAdmin, getMetrics, downloadReport } from "../controllers/adminController.js";
+import { registerAdmin, loginAdmin, getMetrics, downloadReport, verifyEmail, resendVerificationEmail } from "../controllers/adminController.js";
 
 const router = express.Router();
 import * as activityLogCtrl from "../controllers/activityLogController.js";
@@ -290,5 +290,32 @@ router.get("/settings/:adminId", adminSettingsCtrl.getSettings);
  *         description: Settings updated
  */
 router.put("/settings/:adminId", authenticate,adminSettingsCtrl.updateSettings);
+/**
+ * @swagger
+ * /api/admin/verify-email:
+ *   get:
+ *     summary: Verify a user email
+ *     description: Confirms a user's email using a verification token.
+ *     responses:
+ *       200:
+ *         description: Email verified successfully
+ *       400:
+ *         description: Invalid or expired token
+ */
+router.get("/verify-email", verifyEmail);
+
+/**
+ * @swagger
+ * /api/admin/resend-verification:
+ *   post:
+ *     summary: Resend verification email
+ *     description: Sends a new email verification link to the user.
+ *     responses:
+ *       200:
+ *         description: Verification email resent successfully
+ *       400:
+ *         description: Failed to resend email
+ */
+router.post("/resend-verification", resendVerificationEmail);
 
 export default router;

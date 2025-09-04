@@ -148,7 +148,7 @@ export const resendVerificationEmail = async (req, res) => {
     await admin.save();
 
     // Send verification email
-    const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+    const verificationUrl = `${process.env.BASE_URL}/api/admin/verify-email?token=${verificationToken}`;
 
     const mailOptions = {
       from: "certomehq@gmail.com", // same as transporter

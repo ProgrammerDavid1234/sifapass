@@ -149,7 +149,7 @@ router.get("/logs", activityLogCtrl.getLogs);
  *       201:
  *         description: Log created
  */
-router.post("/logs", authenticate,activityLogCtrl.addLog);
+router.post("/logs", authenticate, activityLogCtrl.addLog);
 
 
 /**
@@ -192,7 +192,7 @@ router.get("/team", teamMemberCtrl.getMembers);
  *       201:
  *         description: Member created
  */
-router.post("/team", authenticate,teamMemberCtrl.addMember);
+router.post("/team", authenticate, teamMemberCtrl.addMember);
 
 /**
  * @swagger
@@ -221,7 +221,7 @@ router.post("/team", authenticate,teamMemberCtrl.addMember);
  *       200:
  *         description: Member updated
  */
-router.put("/team/:id", authenticate,teamMemberCtrl.updateMember);
+router.put("/team/:id", authenticate, teamMemberCtrl.updateMember);
 
 /**
  * @swagger
@@ -239,7 +239,7 @@ router.put("/team/:id", authenticate,teamMemberCtrl.updateMember);
  *       200:
  *         description: Member deleted
  */
-router.delete("/team/:id", authenticate,teamMemberCtrl.deleteMember);
+router.delete("/team/:id", authenticate, teamMemberCtrl.deleteMember);
 
 
 
@@ -289,11 +289,12 @@ router.get("/settings/:adminId", adminSettingsCtrl.getSettings);
  *       200:
  *         description: Settings updated
  */
-router.put("/settings/:adminId", authenticate,adminSettingsCtrl.updateSettings);
+router.put("/settings/:adminId", authenticate, adminSettingsCtrl.updateSettings);
 /**
  * @swagger
  * /api/admin/verify-email:
  *   get:
+ *     tags: [Admin]
  *     summary: Verify a user email
  *     description: Confirms a user's email using a verification token.
  *     responses:
@@ -308,6 +309,7 @@ router.get("/verify-email", verifyEmail);
  * @swagger
  * /api/admin/resend-verification:
  *   post:
+ *     tags: [Admin]
  *     summary: Resend verification email
  *     description: Sends a new email verification link to the user.
  *     responses:

@@ -546,9 +546,63 @@ router.put("/participants/:id/settings", authenticate, async (req, res) => {
  * /api/participants/{id}/events:
  *   get:
  *     summary: Get participant events
+ *     description: Retrieve all events a participant has registered for using their participant ID.
  *     tags: [Participants]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         description: The participant's unique ID
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: A list of events the participant is registered for
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: string
+ *                     example: "64eafbc52171d2e546be8738"
+ *                   name:
+ *                     type: string
+ *                     example: "Tech Conference 2025"
+ *                   date:
+ *                     type: string
+ *                     format: date-time
+ *                     example: "2025-09-04T09:00:00.000Z"
+ *                   location:
+ *                     type: string
+ *                     example: "Lagos, Nigeria"
+ *                   description:
+ *                     type: string
+ *                     example: "A global tech conference focused on AI and Cloud Computing."
+ *       404:
+ *         description: Participant not found or no events available
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: "No events found for this participant"
+ *       500:
+ *         description: Server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: "Internal server error"
  */
-router.get("/participants/:id/events", async (req, res) => {
+router.get("/:id/events", async (req, res) => {
     try {
         const events = await Event.find({ participants: req.params.id });
         res.json(events);

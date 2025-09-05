@@ -74,6 +74,8 @@ export const createCredential = async (req, res) => {
             downloadLink,
             blockchainHash,
             qrCode,
+            issuedBy: req.user.id // ✅ Make sure the logged-in Admin is issuing it
+
         });
 
         res
@@ -762,7 +764,8 @@ export const createCredentialWithDesign = async (req, res) => {
             type,
             templateId,
             designData,
-            participantData
+            participantData,
+
         } = req.body;
 
         // Validate required fields
@@ -793,7 +796,9 @@ export const createCredentialWithDesign = async (req, res) => {
             blockchainHash,
             qrCode,
             verificationUrl,
-            participantData: participantData || {}
+            participantData: participantData || {},
+            issuedBy: req.user.id // ✅ Correct placement here
+
         });
 
         res.status(201).json({

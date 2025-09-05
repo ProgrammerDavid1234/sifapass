@@ -152,7 +152,7 @@ const credentialSchema = new mongoose.Schema({
   sharedWith: [{
     user: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User"
+      ref: "Admin"
     },
     sharedAt: {
       type: Date,
@@ -195,18 +195,18 @@ const credentialSchema = new mongoose.Schema({
   },
   issuedBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
+    ref: "Admin",
     required: true
   },
   approvedBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User"
+    ref: "Admin"
   },
   approvedAt: Date,
   revokedAt: Date,
   revokedBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User"
+    ref: "Admin"
   },
   revocationReason: String,
   expiresAt: Date,

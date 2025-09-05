@@ -273,7 +273,26 @@ export const reconcileCertificates = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+/**
+ * Get My Credentials (for participant)
+ */
+export const getMyCredentials = async (req, res) => {
+    try {
+        const participantId = req.user.id; // From authentication middleware
 
+        const credentials = await Credential.find({ participantId })
+            .populate("eventId", "title startDate location")
+            .sort({ createdAt: -1 });
+
+        res.status(200).json(credentials);
+    } catch (error) {
+        console.error("Get My Credentials Error:", error);
+        res.status(500).json({
+            message: "Failed to fetch credentials",
+            error: error.message
+        });
+    }
+};
 export default {
     createCredential,
     getCredentials,

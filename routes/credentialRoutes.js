@@ -8,7 +8,8 @@ import {
     customizeCredential,
     verifyCredential,
     reconcileCertificates,
-    getCredentialStats
+    getCredentialStats,
+    getMyCredentials
 } from "../controllers/credentialController.js";
 
 const router = express.Router();
@@ -212,5 +213,19 @@ router.post("/create", authenticate, upload.single("file"), createCredential);
  *         description: Server error    
  */
 router.get("/stats", authenticate, getCredentialStats);
-
+/**
+ * @swagger
+ * /api/credentials/my:
+ *   get:
+ *     summary: Get credentials for the logged-in participant
+ *     tags: [Participants]
+ *     responses:
+ *       200:
+ *         description: List of credentials for the participant
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+router.get("/my", authenticate, getMyCredentials);
 export default router;

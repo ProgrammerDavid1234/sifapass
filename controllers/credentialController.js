@@ -490,7 +490,8 @@ export const previewCredential = async (req, res) => {
 
 export const exportCredentialPNG = async (req, res) => {
     try {
-        console.log('Starting PNG export...', req.body);
+        console.log('Starting PNG export...');
+        console.log('Request body keys:', Object.keys(req.body || {}));
 
         const { designData, participantData, credentialId } = req.body;
 
@@ -515,8 +516,10 @@ export const exportCredentialPNG = async (req, res) => {
         console.log('Converting HTML to PNG...');
         const pngBuffer = await generatePNGFromHTML(html);
 
-        console.log('PNG generated, uploading to Cloudinary...');
-        // Upload to Cloudinary with timeout
+        console.log('PNG generated successfully, size:', pngBuffer.length, 'bytes');
+        console.log('Uploading to Cloudinary...');
+
+        // Upload to Cloudinary with timeout handling
         const uploadResult = await Promise.race([
             new Promise((resolve, reject) => {
                 cloudinary.uploader.upload_stream(
@@ -524,20 +527,22 @@ export const exportCredentialPNG = async (req, res) => {
                         resource_type: "image",
                         folder: "credentials/exports",
                         format: "png",
-                        timeout: 60000 // 60 second timeout
+                        timeout: 60000
                     },
                     (error, result) => {
-                        if (error) return reject(error);
+                        if (error) {
+                            console.error('Cloudinary upload error:', error);
+                            return reject(error);
+                        }
+                        console.log('Cloudinary upload success:', result.secure_url);
                         resolve(result);
                     }
                 ).end(pngBuffer);
             }),
             new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Cloudinary upload timeout')), 70000)
+                setTimeout(() => reject(new Error('Cloudinary upload timeout after 70s')), 70000)
             )
         ]);
-
-        console.log('Upload successful:', uploadResult.secure_url);
 
         // Update credential with export link if credentialId provided
         if (credentialId && mongoose.Types.ObjectId.isValid(credentialId)) {
@@ -555,7 +560,8 @@ export const exportCredentialPNG = async (req, res) => {
         res.json({
             success: true,
             exportUrl: uploadResult.secure_url,
-            message: "PNG exported successfully"
+            message: "PNG exported successfully",
+            fileSize: pngBuffer.length
         });
 
     } catch (error) {
@@ -564,10 +570,11 @@ export const exportCredentialPNG = async (req, res) => {
             success: false,
             message: "Failed to export PNG",
             error: error.message,
-            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
         });
     }
 };
+
 
 /**
  * Export Credential as JPEG
@@ -656,11 +663,20 @@ export const exportCredentialPDF = async (req, res) => {
  */
 function generateCredentialHTML(designData, participantData = {}) {
     try {
+        console.log('Generating HTML for credential...');
+
+        if (!designData || typeof designData !== 'object') {
+            throw new Error('Invalid design data provided');
+        }
+
         const { elements = [], canvas = {}, background = {} } = designData;
 
         // Set default canvas dimensions if not provided
         const canvasWidth = canvas.width || 800;
         const canvasHeight = canvas.height || 600;
+
+        console.log(`Canvas dimensions: ${canvasWidth}x${canvasHeight}`);
+        console.log(`Elements count: ${elements.length}`);
 
         let backgroundStyle = '';
         if (background.type === 'gradient') {
@@ -699,6 +715,7 @@ function generateCredentialHTML(designData, participantData = {}) {
                     color: ${element.color || '#000000'};
                     text-align: ${element.textAlign || 'left'};
                     z-index: ${element.zIndex || 1};
+                    box-sizing: border-box;
                 `;
 
                 if (element.type === 'text') {
@@ -706,8 +723,10 @@ function generateCredentialHTML(designData, participantData = {}) {
                 } else if (element.type === 'image' && element.src) {
                     elementsHtml += `<img src="${element.src}" style="${elementStyle}" alt="${element.alt || ''}" />`;
                 } else if (element.type === 'qrcode' && element.qrCodeUrl) {
-                    elementsHtml += `<div style="${elementStyle}"><img src="${element.qrCodeUrl}" alt="QR Code" /></div>`;
+                    elementsHtml += `<div style="${elementStyle}"><img src="${element.qrCodeUrl}" alt="QR Code" style="width: 100%; height: 100%;" /></div>`;
                 }
+
+                console.log(`Processed element ${index + 1}: ${element.type}`);
             } catch (elementError) {
                 console.error(`Error processing element ${index}:`, elementError);
                 // Skip problematic elements instead of failing the entire generation
@@ -719,7 +738,9 @@ function generateCredentialHTML(designData, participantData = {}) {
             <html>
             <head>
                 <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <style>
+                    * { box-sizing: border-box; }
                     body { 
                         margin: 0; 
                         padding: 0; 
@@ -745,12 +766,16 @@ function generateCredentialHTML(designData, participantData = {}) {
             </html>
         `;
 
+        console.log('HTML generated successfully');
         return htmlContent;
+
     } catch (error) {
         console.error('HTML Generation Error:', error);
         throw new Error(`Failed to generate HTML: ${error.message}`);
     }
 }
+
+
 /**
  * Generate PNG from HTML using Puppeteer
  */
@@ -758,42 +783,81 @@ async function generatePNGFromHTML(html) {
     let browser;
     try {
         console.log('Launching Puppeteer browser...');
+        
+        // Try to find Chrome executable paths for different environments
+        const possiblePaths = [
+            '/usr/bin/google-chrome-stable',
+            '/usr/bin/google-chrome',
+            '/usr/bin/chromium-browser',
+            '/usr/bin/chromium',
+            process.env.PUPPETEER_EXECUTABLE_PATH,
+            process.env.CHROME_BIN,
+            // Render.com specific paths
+            '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome',
+            '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux/chrome'
+        ].filter(Boolean);
 
-        // Configure Puppeteer for production environment
+        let executablePath;
+        
+        // Check if we can find Chrome
+        const fs = require('fs');
+        for (const path of possiblePaths) {
+            if (path.includes('*')) {
+                // Handle wildcard paths
+                const glob = require('glob');
+                try {
+                    const matches = glob.sync(path);
+                    if (matches.length > 0 && fs.existsSync(matches[0])) {
+                        executablePath = matches[0];
+                        break;
+                    }
+                } catch (e) {
+                    continue;
+                }
+            } else if (fs.existsSync(path)) {
+                executablePath = path;
+                break;
+            }
+        }
+
+        // Configure Puppeteer options
         const puppeteerOptions = {
             headless: "new",
             args: [
-                "--no-sandbox",
+                "--no-sandbox", 
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-accelerated-2d-canvas",
                 "--no-first-run",
                 "--no-zygote",
-                "--disable-gpu"
+                "--disable-gpu",
+                "--disable-web-security",
+                "--disable-features=VizDisplayCompositor"
             ],
-            timeout: 30000 // 30 second timeout for browser launch
+            timeout: 30000,
+            dumpio: false
         };
 
-        // Use custom executable path if provided (for deployment environments)
-        if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-            puppeteerOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+        if (executablePath) {
+            puppeteerOptions.executablePath = executablePath;
+            console.log('Using Chrome at:', executablePath);
+        } else {
+            console.log('No Chrome executable found, using Puppeteer default');
         }
 
         browser = await puppeteer.launch(puppeteerOptions);
         console.log('Browser launched successfully');
 
         const page = await browser.newPage();
-
-        // Set a reasonable timeout for page operations
         page.setDefaultTimeout(15000);
-
+        
         console.log('Setting page content...');
         await page.setContent(html, { waitUntil: 'networkidle0', timeout: 10000 });
-
+        
         console.log('Setting viewport...');
         await page.setViewport({ width: 800, height: 600 });
 
-        // Wait a bit for fonts and styles to load
+        // Wait for fonts and styles
         await page.waitForTimeout(1000);
 
         console.log('Taking screenshot...');
@@ -814,14 +878,12 @@ async function generatePNGFromHTML(html) {
         if (browser) {
             try {
                 await browser.close();
-                console.log('Browser closed');
             } catch (closeError) {
                 console.error('Error closing browser:', closeError);
             }
         }
     }
 }
-
 /**
  * Generate JPEG from HTML using Puppeteer
  */

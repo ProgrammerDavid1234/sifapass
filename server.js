@@ -55,7 +55,9 @@ app.use(cors({
         'http://localhost:3000', // Added common React dev port
         'http://localhost:8080',
         'https://sifapass-eta.vercel.app',
-        'https://sifapass.vercel.app'
+        'https://sifapass.vercel.app',
+        'https://sifapass.onrender.com/api-docs', // Add this
+
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     credentials: true,

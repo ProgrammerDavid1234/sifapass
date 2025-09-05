@@ -487,31 +487,69 @@ export const previewCredential = async (req, res) => {
 /**
  * Export Credential as PNG
  */
+
 export const exportCredentialPNG = async (req, res) => {
     try {
+        console.log('Starting PNG export...', req.body);
+
         const { designData, participantData, credentialId } = req.body;
 
+        // Validate input data
+        if (!designData) {
+            return res.status(400).json({
+                success: false,
+                message: "Design data is required"
+            });
+        }
+
+        if (!participantData) {
+            return res.status(400).json({
+                success: false,
+                message: "Participant data is required"
+            });
+        }
+
+        console.log('Generating HTML...');
         const html = generateCredentialHTML(designData, participantData);
+
+        console.log('Converting HTML to PNG...');
         const pngBuffer = await generatePNGFromHTML(html);
 
-        // Upload to Cloudinary
-        const uploadResult = await new Promise((resolve, reject) => {
-            cloudinary.uploader.upload_stream(
-                { resource_type: "image", folder: "credentials/exports", format: "png" },
-                (error, result) => {
-                    if (error) return reject(error);
-                    resolve(result);
-                }
-            ).end(pngBuffer);
-        });
+        console.log('PNG generated, uploading to Cloudinary...');
+        // Upload to Cloudinary with timeout
+        const uploadResult = await Promise.race([
+            new Promise((resolve, reject) => {
+                cloudinary.uploader.upload_stream(
+                    {
+                        resource_type: "image",
+                        folder: "credentials/exports",
+                        format: "png",
+                        timeout: 60000 // 60 second timeout
+                    },
+                    (error, result) => {
+                        if (error) return reject(error);
+                        resolve(result);
+                    }
+                ).end(pngBuffer);
+            }),
+            new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Cloudinary upload timeout')), 70000)
+            )
+        ]);
+
+        console.log('Upload successful:', uploadResult.secure_url);
 
         // Update credential with export link if credentialId provided
-        if (credentialId) {
-            await Credential.findByIdAndUpdate(credentialId, {
-                exportLinks: {
-                    png: uploadResult.secure_url
-                }
-            });
+        if (credentialId && mongoose.Types.ObjectId.isValid(credentialId)) {
+            try {
+                await Credential.findByIdAndUpdate(credentialId, {
+                    $set: { "exportLinks.png": uploadResult.secure_url }
+                });
+                console.log('Credential updated with PNG link');
+            } catch (updateError) {
+                console.error('Failed to update credential:', updateError);
+                // Don't fail the request if credential update fails
+            }
         }
 
         res.json({
@@ -519,11 +557,14 @@ export const exportCredentialPNG = async (req, res) => {
             exportUrl: uploadResult.secure_url,
             message: "PNG exported successfully"
         });
+
     } catch (error) {
         console.error("PNG Export Error:", error);
         res.status(500).json({
+            success: false,
             message: "Failed to export PNG",
-            error: error.message
+            error: error.message,
+            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
         });
     }
 };
@@ -614,99 +655,173 @@ export const exportCredentialPDF = async (req, res) => {
  * Generate HTML from Design Data
  */
 function generateCredentialHTML(designData, participantData = {}) {
-    const { elements = [], canvas = {}, background = {} } = designData;
+    try {
+        const { elements = [], canvas = {}, background = {} } = designData;
 
-    let backgroundStyle = '';
-    if (background.type === 'gradient') {
-        const direction = background.gradientDirection || 'to right';
-        const primary = background.primaryColor || '#ffffff';
-        const secondary = background.secondaryColor || '#f0f0f0';
-        backgroundStyle = `background: linear-gradient(${direction}, ${primary}, ${secondary});`;
-    } else if (background.type === 'solid') {
-        backgroundStyle = `background-color: ${background.color || '#ffffff'};`;
-    } else if (background.type === 'image' && background.imageUrl) {
-        backgroundStyle = `background-image: url('${background.imageUrl}'); background-size: cover; background-position: center;`;
-    }
+        // Set default canvas dimensions if not provided
+        const canvasWidth = canvas.width || 800;
+        const canvasHeight = canvas.height || 600;
 
-    let elementsHtml = '';
-    elements.forEach(element => {
-        let content = element.content || '';
+        let backgroundStyle = '';
+        if (background.type === 'gradient') {
+            const direction = background.gradientDirection || 'to right';
+            const primary = background.primaryColor || '#ffffff';
+            const secondary = background.secondaryColor || '#f0f0f0';
+            backgroundStyle = `background: linear-gradient(${direction}, ${primary}, ${secondary});`;
+        } else if (background.type === 'solid') {
+            backgroundStyle = `background-color: ${background.color || '#ffffff'};`;
+        } else if (background.type === 'image' && background.imageUrl) {
+            backgroundStyle = `background-image: url('${background.imageUrl}'); background-size: cover; background-position: center;`;
+        } else {
+            backgroundStyle = 'background-color: #ffffff;'; // Default white background
+        }
 
-        // Replace placeholders with participant data
-        content = content.replace(/\{\{participantName\}\}/g, participantData.name || 'John Doe');
-        content = content.replace(/\{\{eventTitle\}\}/g, participantData.eventTitle || 'Sample Event');
-        content = content.replace(/\{\{eventDate\}\}/g, participantData.eventDate || new Date().toLocaleDateString());
-        content = content.replace(/\{\{skills\}\}/g, participantData.skills || 'Sample Skills');
+        let elementsHtml = '';
+        elements.forEach((element, index) => {
+            try {
+                let content = element.content || '';
 
-        const elementStyle = `
-            position: absolute;
-            left: ${element.x || 0}px;
-            top: ${element.y || 0}px;
-            width: ${element.width || 'auto'}px;
-            height: ${element.height || 'auto'}px;
-            font-family: ${element.fontFamily || 'Arial'};
-            font-size: ${element.fontSize || 16}px;
-            font-weight: ${element.fontWeight || 'normal'};
-            color: ${element.color || '#000000'};
-            text-align: ${element.textAlign || 'left'};
-            z-index: ${element.zIndex || 1};
+                // Replace placeholders with participant data
+                content = content.replace(/\{\{participantName\}\}/g, participantData.name || 'John Doe');
+                content = content.replace(/\{\{eventTitle\}\}/g, participantData.eventTitle || 'Sample Event');
+                content = content.replace(/\{\{eventDate\}\}/g, participantData.eventDate || new Date().toLocaleDateString());
+                content = content.replace(/\{\{skills\}\}/g, participantData.skills || 'Sample Skills');
+
+                const elementStyle = `
+                    position: absolute;
+                    left: ${element.x || 0}px;
+                    top: ${element.y || 0}px;
+                    width: ${element.width || 'auto'}px;
+                    height: ${element.height || 'auto'}px;
+                    font-family: ${element.fontFamily || 'Arial, sans-serif'};
+                    font-size: ${element.fontSize || 16}px;
+                    font-weight: ${element.fontWeight || 'normal'};
+                    color: ${element.color || '#000000'};
+                    text-align: ${element.textAlign || 'left'};
+                    z-index: ${element.zIndex || 1};
+                `;
+
+                if (element.type === 'text') {
+                    elementsHtml += `<div style="${elementStyle}">${content}</div>`;
+                } else if (element.type === 'image' && element.src) {
+                    elementsHtml += `<img src="${element.src}" style="${elementStyle}" alt="${element.alt || ''}" />`;
+                } else if (element.type === 'qrcode' && element.qrCodeUrl) {
+                    elementsHtml += `<div style="${elementStyle}"><img src="${element.qrCodeUrl}" alt="QR Code" /></div>`;
+                }
+            } catch (elementError) {
+                console.error(`Error processing element ${index}:`, elementError);
+                // Skip problematic elements instead of failing the entire generation
+            }
+        });
+
+        const htmlContent = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body { 
+                        margin: 0; 
+                        padding: 0; 
+                        font-family: Arial, sans-serif;
+                        width: ${canvasWidth}px;
+                        height: ${canvasHeight}px;
+                        overflow: hidden;
+                    }
+                    .credential-container {
+                        position: relative;
+                        width: ${canvasWidth}px;
+                        height: ${canvasHeight}px;
+                        ${backgroundStyle}
+                        overflow: hidden;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="credential-container">
+                    ${elementsHtml}
+                </div>
+            </body>
+            </html>
         `;
 
-        if (element.type === 'text') {
-            elementsHtml += `<div style="${elementStyle}">${content}</div>`;
-        } else if (element.type === 'image') {
-            elementsHtml += `<img src="${element.src}" style="${elementStyle}" alt="${element.alt || ''}" />`;
-        } else if (element.type === 'qrcode') {
-            elementsHtml += `<div style="${elementStyle}"><img src="${element.qrCodeUrl}" alt="QR Code" /></div>`;
-        }
-    });
-
-    return `
-        <html>
-        <head>
-            <style>
-                body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
-                .credential-container {
-                    position: relative;
-                    width: ${canvas.width || 800}px;
-                    height: ${canvas.height || 600}px;
-                    ${backgroundStyle}
-                    overflow: hidden;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="credential-container">
-                ${elementsHtml}
-            </div>
-        </body>
-        </html>
-    `;
+        return htmlContent;
+    } catch (error) {
+        console.error('HTML Generation Error:', error);
+        throw new Error(`Failed to generate HTML: ${error.message}`);
+    }
 }
-
 /**
  * Generate PNG from HTML using Puppeteer
  */
 async function generatePNGFromHTML(html) {
-    const browser = await puppeteer.launch({
-        headless: "new",
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
-    });
+    let browser;
+    try {
+        console.log('Launching Puppeteer browser...');
 
-    const page = await browser.newPage();
-    await page.setContent(html);
-    await page.setViewport({ width: 800, height: 600 });
+        // Configure Puppeteer for production environment
+        const puppeteerOptions = {
+            headless: "new",
+            args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-accelerated-2d-canvas",
+                "--no-first-run",
+                "--no-zygote",
+                "--disable-gpu"
+            ],
+            timeout: 30000 // 30 second timeout for browser launch
+        };
 
-    const screenshot = await page.screenshot({
-        type: "png",
-        fullPage: true,
-        omitBackground: false,
-    });
+        // Use custom executable path if provided (for deployment environments)
+        if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+            puppeteerOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+        }
 
-    await browser.close();
-    return screenshot;
+        browser = await puppeteer.launch(puppeteerOptions);
+        console.log('Browser launched successfully');
+
+        const page = await browser.newPage();
+
+        // Set a reasonable timeout for page operations
+        page.setDefaultTimeout(15000);
+
+        console.log('Setting page content...');
+        await page.setContent(html, { waitUntil: 'networkidle0', timeout: 10000 });
+
+        console.log('Setting viewport...');
+        await page.setViewport({ width: 800, height: 600 });
+
+        // Wait a bit for fonts and styles to load
+        await page.waitForTimeout(1000);
+
+        console.log('Taking screenshot...');
+        const screenshot = await page.screenshot({
+            type: "png",
+            fullPage: true,
+            omitBackground: false,
+            timeout: 10000
+        });
+
+        console.log('Screenshot taken successfully');
+        return screenshot;
+
+    } catch (error) {
+        console.error('Puppeteer Error:', error);
+        throw new Error(`Failed to generate PNG: ${error.message}`);
+    } finally {
+        if (browser) {
+            try {
+                await browser.close();
+                console.log('Browser closed');
+            } catch (closeError) {
+                console.error('Error closing browser:', closeError);
+            }
+        }
+    }
 }
+
 /**
  * Generate JPEG from HTML using Puppeteer
  */

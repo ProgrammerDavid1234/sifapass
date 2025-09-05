@@ -458,6 +458,26 @@ router.post("/designer/save", authenticate, saveDesignProgress);
 router.post("/designer/preview", authenticate, previewCredential);
 
 // ==================== EXPORT FUNCTIONALITY ROUTES ====================
+// Add this middleware before your export routes to debug the issue
+
+const debugExportMiddleware = (req, res, next) => {
+    console.log(`Export request started: ${req.method} ${req.path}`);
+    console.log('Headers:', JSON.stringify(req.headers, null, 2));
+    console.log('Body keys:', Object.keys(req.body || {}));
+    console.log('User:', req.user ? req.user.id : 'No user');
+
+    // Set a longer timeout for export operations
+    req.setTimeout(120000); // 2 minutes
+    res.setTimeout(120000);
+
+    const originalSend = res.send;
+    res.send = function (data) {
+        console.log(`Export request completed: ${res.statusCode}`);
+        originalSend.call(this, data);
+    };
+
+    next();
+};
 
 /**
  * @swagger
@@ -864,7 +884,7 @@ router.get("/templates/public", async (req, res) => {
     try {
         const { type } = req.query;
         const templates = await CredentialTemplate.getPublicTemplates(type);
-        
+
         res.json({
             success: true,
             templates

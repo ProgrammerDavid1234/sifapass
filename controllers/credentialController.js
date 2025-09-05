@@ -688,14 +688,13 @@ function generateCredentialHTML(designData, participantData = {}) {
  * Generate PNG from HTML using Puppeteer
  */
 async function generatePNGFromHTML(html) {
-    async function generatePNGFromHTML(html) {
     const browser = await puppeteer.launch({
         headless: "new",
         args: ["--no-sandbox", "--disable-setuid-sandbox"],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
     });
-    const page = await browser.newPage();
 
+    const page = await browser.newPage();
     await page.setContent(html);
     await page.setViewport({ width: 800, height: 600 });
 
@@ -708,39 +707,23 @@ async function generatePNGFromHTML(html) {
     await browser.close();
     return screenshot;
 }
-
-    const page = await browser.newPage();
-
-    await page.setContent(html);
-    await page.setViewport({ width: 800, height: 600 });
-
-    const screenshot = await page.screenshot({
-        type: 'png',
-        fullPage: true,
-        omitBackground: false
-    });
-
-    await browser.close();
-    return screenshot;
-}
-
 /**
  * Generate JPEG from HTML using Puppeteer
  */
 async function generateJPEGFromHTML(html) {
-    async function generatePNGFromHTML(html) {
     const browser = await puppeteer.launch({
         headless: "new",
         args: ["--no-sandbox", "--disable-setuid-sandbox"],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
     });
-    const page = await browser.newPage();
 
+    const page = await browser.newPage();
     await page.setContent(html);
     await page.setViewport({ width: 800, height: 600 });
 
     const screenshot = await page.screenshot({
-        type: "png",
+        type: "jpeg",
+        quality: 90,
         fullPage: true,
         omitBackground: false,
     });
@@ -748,62 +731,29 @@ async function generateJPEGFromHTML(html) {
     await browser.close();
     return screenshot;
 }
-
-    const page = await browser.newPage();
-
-    await page.setContent(html);
-    await page.setViewport({ width: 800, height: 600 });
-
-    const screenshot = await page.screenshot({
-        type: 'jpeg',
-        quality: 90,
-        fullPage: true,
-        omitBackground: false
-    });
-
-    await browser.close();
-    return screenshot;
-}
-
 /**
  * Generate PDF from HTML using Puppeteer
  */
 async function generatePDFFromHTML(html) {
-    async function generatePNGFromHTML(html) {
     const browser = await puppeteer.launch({
         headless: "new",
         args: ["--no-sandbox", "--disable-setuid-sandbox"],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
     });
-    const page = await browser.newPage();
-
-    await page.setContent(html);
-    await page.setViewport({ width: 800, height: 600 });
-
-    const screenshot = await page.screenshot({
-        type: "png",
-        fullPage: true,
-        omitBackground: false,
-    });
-
-    await browser.close();
-    return screenshot;
-}
 
     const page = await browser.newPage();
-
     await page.setContent(html);
 
     const pdf = await page.pdf({
-        format: 'A4',
+        format: "A4",
         landscape: true,
         printBackground: true,
         margin: {
-            top: '0.5in',
-            right: '0.5in',
-            bottom: '0.5in',
-            left: '0.5in'
-        }
+            top: "0.5in",
+            right: "0.5in",
+            bottom: "0.5in",
+            left: "0.5in",
+        },
     });
 
     await browser.close();

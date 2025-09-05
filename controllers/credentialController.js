@@ -688,7 +688,27 @@ function generateCredentialHTML(designData, participantData = {}) {
  * Generate PNG from HTML using Puppeteer
  */
 async function generatePNGFromHTML(html) {
-    const browser = await puppeteer.launch({ headless: true });
+    async function generatePNGFromHTML(html) {
+    const browser = await puppeteer.launch({
+        headless: "new",
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+    });
+    const page = await browser.newPage();
+
+    await page.setContent(html);
+    await page.setViewport({ width: 800, height: 600 });
+
+    const screenshot = await page.screenshot({
+        type: "png",
+        fullPage: true,
+        omitBackground: false,
+    });
+
+    await browser.close();
+    return screenshot;
+}
+
     const page = await browser.newPage();
 
     await page.setContent(html);
@@ -708,7 +728,27 @@ async function generatePNGFromHTML(html) {
  * Generate JPEG from HTML using Puppeteer
  */
 async function generateJPEGFromHTML(html) {
-    const browser = await puppeteer.launch({ headless: true });
+    async function generatePNGFromHTML(html) {
+    const browser = await puppeteer.launch({
+        headless: "new",
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+    });
+    const page = await browser.newPage();
+
+    await page.setContent(html);
+    await page.setViewport({ width: 800, height: 600 });
+
+    const screenshot = await page.screenshot({
+        type: "png",
+        fullPage: true,
+        omitBackground: false,
+    });
+
+    await browser.close();
+    return screenshot;
+}
+
     const page = await browser.newPage();
 
     await page.setContent(html);
@@ -729,7 +769,27 @@ async function generateJPEGFromHTML(html) {
  * Generate PDF from HTML using Puppeteer
  */
 async function generatePDFFromHTML(html) {
-    const browser = await puppeteer.launch({ headless: true });
+    async function generatePNGFromHTML(html) {
+    const browser = await puppeteer.launch({
+        headless: "new",
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+    });
+    const page = await browser.newPage();
+
+    await page.setContent(html);
+    await page.setViewport({ width: 800, height: 600 });
+
+    const screenshot = await page.screenshot({
+        type: "png",
+        fullPage: true,
+        omitBackground: false,
+    });
+
+    await browser.close();
+    return screenshot;
+}
+
     const page = await browser.newPage();
 
     await page.setContent(html);

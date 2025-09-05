@@ -22,6 +22,7 @@ import invoiceRoutes from "./routes/invoiceRoutes.js";
 import credentialRoutes from "./routes/credentialRoutes.js";
 import certificateRoutes from "./routes/certificateRoutes.js";
 import organizationRoutes from "./routes/Organization.js";
+import designerRoutes from "./routes/designer.js";
 
 // Import new designer routes (comment this out if the file doesn't exist yet)
 // import designerRoutes from "./routes/designer.js";
@@ -333,7 +334,7 @@ app.use("/admin/plans", planRoutes);
 app.use("/admin/invoices", invoiceRoutes);
 
 // New designer routes - uncomment when designer.js file is created
-// app.use("/api/designer", designerLimiter, designerRoutes);
+app.use("/api/designer", designerLimiter, designerRoutes);
 
 // Global error handling middleware
 app.use((error, req, res, next) => {

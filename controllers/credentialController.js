@@ -1,8 +1,14 @@
-// controllers/credentialController.js
 import Credential from "../models/Credentials.js";
+import CredentialTemplate from "../models/CredentialTemplate.js";
 import QRCode from "qrcode";
 import crypto from "crypto";
 import { v2 as cloudinary } from "cloudinary";
+import puppeteer from 'puppeteer';
+import sharp from 'sharp';
+import PDFDocument from 'pdfkit';
+import fs from 'fs';
+import path from 'path';
+
 /**
  * Create or Import Credential
  */

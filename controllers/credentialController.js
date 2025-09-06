@@ -884,6 +884,8 @@ async function generatePNGFromHTML(html) {
         }
     }
 }
+
+
 /**
  * Generate JPEG from HTML using Puppeteer
  */

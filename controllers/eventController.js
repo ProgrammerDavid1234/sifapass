@@ -174,7 +174,7 @@ export const getEventsWithCredentialStats = async (req, res) => {
         // Process each event to add credential statistics and status
         const eventsWithStats = await Promise.all(events.map(async (event) => {
             const participantCount = event.participants.length;
-            
+
             // Count credentials issued for this event
             let credentialCount = 0;
             try {
@@ -192,7 +192,7 @@ export const getEventsWithCredentialStats = async (req, res) => {
             const now = new Date();
             const eventStart = new Date(event.startDate);
             const eventEnd = event.endDate ? new Date(event.endDate) : eventStart;
-            
+
             let status = 'upcoming';
             if (now >= eventStart && now <= eventEnd) {
                 status = 'active';
@@ -240,47 +240,63 @@ export const getEventsWithCredentialStats = async (req, res) => {
 
     } catch (error) {
         console.error('Error fetching events with credential stats:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
             message: 'Failed to fetch events with credential statistics',
-            error: error.message 
+            error: error.message
         });
     }
 };
 
 // Get specific event with detailed participant and credential info
+// Fixed version of getEventWithParticipants function
 export const getEventWithParticipants = async (req, res) => {
     try {
         const { eventId } = req.params;
         const adminId = req.user.id;
 
-        const event = await Event.findOne({ _id: eventId, createdBy: adminId })
-            .populate({
-                path: 'participants',
-                select: 'fullName email createdAt'
-            });
-
-        if (!event) {
-            return res.status(404).json({ 
+        // Validate eventId
+        if (!mongoose.Types.ObjectId.isValid(eventId)) {
+            return res.status(400).json({
                 success: false,
-                message: 'Event not found or unauthorized' 
+                message: 'Invalid event ID format'
             });
         }
 
+        const event = await Event.findOne({ _id: eventId, createdBy: adminId })
+            .populate({
+                path: 'participants',
+                select: 'fullName email createdAt',
+                options: { strictPopulate: false } // Add this to handle missing references
+            })
+            .lean(); // Add lean() for better performance
+
+        if (!event) {
+            return res.status(404).json({
+                success: false,
+                message: 'Event not found or unauthorized'
+            });
+        }
+
+        // Ensure participants array exists and filter out null/undefined entries
+        const validParticipants = (event.participants || []).filter(participant =>
+            participant && participant._id && participant.fullName && participant.email
+        );
+
         // Get credential information for each participant
         let participantsWithCredentials = [];
-        
+
         try {
             participantsWithCredentials = await Promise.all(
-                event.participants.map(async (participant) => {
+                validParticipants.map(async (participant) => {
                     let credentials = [];
                     try {
                         credentials = await Credential.find({
                             participantId: participant._id,
                             eventId: event._id
-                        }).select('status issuedAt credentialType');
+                        }).select('status issuedAt credentialType').lean();
                     } catch (credError) {
-                        console.log('Error fetching credentials:', credError.message);
+                        console.log('Error fetching credentials for participant:', participant._id, credError.message);
                         credentials = [];
                     }
 
@@ -297,7 +313,7 @@ export const getEventWithParticipants = async (req, res) => {
         } catch (participantError) {
             console.log('Error processing participants:', participantError.message);
             // Fallback to basic participant info without credentials
-            participantsWithCredentials = event.participants.map(participant => ({
+            participantsWithCredentials = validParticipants.map(participant => ({
                 _id: participant._id,
                 fullName: participant.fullName,
                 email: participant.email,
@@ -308,7 +324,7 @@ export const getEventWithParticipants = async (req, res) => {
         }
 
         const credentialStats = {
-            total: event.participants.length,
+            total: validParticipants.length,
             issued: participantsWithCredentials.filter(p => p.hasCredential).length,
             pending: participantsWithCredentials.filter(p => !p.hasCredential).length
         };
@@ -331,13 +347,14 @@ export const getEventWithParticipants = async (req, res) => {
 
     } catch (error) {
         console.error('Error fetching event participants:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
             message: 'Failed to fetch event participants',
-            error: error.message 
+            error: error.message
         });
     }
 };
+
 
 // Generate registration link
 export const getRegistrationLink = async (req, res) => {
@@ -346,11 +363,11 @@ export const getRegistrationLink = async (req, res) => {
         const adminId = req.user.id;
 
         const event = await Event.findOne({ _id: eventId, createdBy: adminId });
-        
+
         if (!event) {
-            return res.status(404).json({ 
+            return res.status(404).json({
                 success: false,
-                message: 'Event not found or unauthorized' 
+                message: 'Event not found or unauthorized'
             });
         }
 
@@ -367,10 +384,10 @@ export const getRegistrationLink = async (req, res) => {
 
     } catch (error) {
         console.error('Error generating registration link:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
             message: 'Failed to generate registration link',
-            error: error.message 
+            error: error.message
         });
     }
 };

@@ -783,7 +783,7 @@ async function generatePNGFromHTML(html) {
     let browser;
     try {
         console.log('Launching Puppeteer browser...');
-        
+
         // Try to find Chrome executable paths for different environments
         const possiblePaths = [
             '/usr/bin/google-chrome-stable',
@@ -798,7 +798,7 @@ async function generatePNGFromHTML(html) {
         ].filter(Boolean);
 
         let executablePath;
-        
+
         // Check if we can find Chrome
         const fs = require('fs');
         for (const path of possiblePaths) {
@@ -824,7 +824,7 @@ async function generatePNGFromHTML(html) {
         const puppeteerOptions = {
             headless: "new",
             args: [
-                "--no-sandbox", 
+                "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-accelerated-2d-canvas",
@@ -850,10 +850,10 @@ async function generatePNGFromHTML(html) {
 
         const page = await browser.newPage();
         page.setDefaultTimeout(15000);
-        
+
         console.log('Setting page content...');
         await page.setContent(html, { waitUntil: 'networkidle0', timeout: 10000 });
-        
+
         console.log('Setting viewport...');
         await page.setViewport({ width: 800, height: 600 });
 
@@ -1003,6 +1003,175 @@ export const createCredentialWithDesign = async (req, res) => {
         });
     }
 };
+
+export const getAdminCredentials = async (req, res) => {
+    try {
+        const adminId = req.user.id;
+        const { type, limit = 50, offset = 0 } = req.query;
+
+        console.log('Fetching credentials for admin:', adminId);
+
+        // Build query to find credentials created by this admin
+        let query = {};
+
+        // Option 1: If credentials have a direct createdBy field
+        query.createdBy = adminId;
+
+        // Option 2: If you need to find through events
+        // const adminEvents = await Event.find({ createdBy: adminId }).select('_id');
+        // const eventIds = adminEvents.map(event => event._id);
+        // query.eventId = { $in: eventIds };
+
+        // Add type filter if specified
+        if (type) {
+            query.type = type;
+        }
+
+        console.log('Query:', query);
+
+        // Find credentials with populated data
+        const credentials = await Credential.find(query)
+            .populate({
+                path: 'participantId',
+                select: 'fullName name email'
+            })
+            .populate({
+                path: 'eventId',
+                select: 'title name startDate endDate'
+            })
+            .sort({ createdAt: -1 }) // Most recent first
+            .limit(parseInt(limit))
+            .skip(parseInt(offset))
+            .lean();
+
+        console.log(`Found ${credentials.length} credentials`);
+
+        // Transform the data for frontend consumption
+        const transformedCredentials = credentials.map(credential => ({
+            _id: credential._id,
+            id: credential._id,
+            title: credential.title,
+            description: credential.description,
+            type: credential.type || credential.credentialType,
+            status: credential.status,
+            participantName: credential.participantId?.fullName || credential.participantId?.name || 'Unknown',
+            participantEmail: credential.participantId?.email,
+            eventTitle: credential.eventId?.title || credential.eventId?.name || 'Unknown Event',
+            eventDate: credential.eventId?.startDate || credential.eventId?.endDate,
+            issuedAt: credential.issuedAt,
+            createdAt: credential.createdAt,
+            updatedAt: credential.updatedAt,
+            lastModified: credential.updatedAt || credential.createdAt,
+            designData: credential.designData,
+            participantData: credential.participantData,
+            verificationUrl: credential.verificationUrl,
+            downloadUrl: credential.downloadUrl
+        }));
+
+        // Get total count for pagination
+        const totalCount = await Credential.countDocuments(query);
+
+        res.status(200).json({
+            success: true,
+            credentials: transformedCredentials,
+            total: totalCount,
+            limit: parseInt(limit),
+            offset: parseInt(offset),
+            hasMore: (parseInt(offset) + credentials.length) < totalCount
+        });
+
+    } catch (error) {
+        console.error('Error fetching admin credentials:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch credentials',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+    }
+};
+
+// Alternative implementation if credentials are linked through events
+export const getAdminCredentialsViaEvents = async (req, res) => {
+    try {
+        const adminId = req.user.id;
+        const { type, limit = 50, offset = 0 } = req.query;
+
+        console.log('Fetching credentials via events for admin:', adminId);
+
+        // First, get all events created by this admin
+        const adminEvents = await Event.find({ createdBy: adminId }).select('_id title startDate');
+        const eventIds = adminEvents.map(event => event._id);
+
+        if (eventIds.length === 0) {
+            return res.status(200).json({
+                success: true,
+                credentials: [],
+                total: 0
+            });
+        }
+
+        // Build query
+        let query = { eventId: { $in: eventIds } };
+        if (type) {
+            query.type = type;
+        }
+
+        // Find credentials for these events
+        const credentials = await Credential.find(query)
+            .populate({
+                path: 'participantId',
+                select: 'fullName name email'
+            })
+            .populate({
+                path: 'eventId',
+                select: 'title name startDate endDate'
+            })
+            .sort({ createdAt: -1 })
+            .limit(parseInt(limit))
+            .skip(parseInt(offset))
+            .lean();
+
+        // Transform data same as above...
+        const transformedCredentials = credentials.map(credential => ({
+            _id: credential._id,
+            id: credential._id,
+            title: credential.title,
+            description: credential.description,
+            type: credential.type || credential.credentialType,
+            status: credential.status,
+            participantName: credential.participantId?.fullName || credential.participantId?.name || 'Unknown',
+            participantEmail: credential.participantId?.email,
+            eventTitle: credential.eventId?.title || credential.eventId?.name || 'Unknown Event',
+            eventDate: credential.eventId?.startDate || credential.eventId?.endDate,
+            issuedAt: credential.issuedAt,
+            createdAt: credential.createdAt,
+            updatedAt: credential.updatedAt,
+            lastModified: credential.updatedAt || credential.createdAt,
+            designData: credential.designData,
+            participantData: credential.participantData
+        }));
+
+        const totalCount = await Credential.countDocuments(query);
+
+        res.status(200).json({
+            success: true,
+            credentials: transformedCredentials,
+            total: totalCount,
+            limit: parseInt(limit),
+            offset: parseInt(offset),
+            hasMore: (parseInt(offset) + credentials.length) < totalCount
+        });
+
+    } catch (error) {
+        console.error('Error fetching credentials via events:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch credentials',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+    }
+};
+
 
 export default {
     createCredential,

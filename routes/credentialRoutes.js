@@ -19,7 +19,8 @@ import {
     exportCredentialPNG,
     exportCredentialJPEG,
     exportCredentialPDF,
-    createCredentialWithDesign
+    createCredentialWithDesign,
+    getAdminCredentialsViaEvents
 } from "../controllers/credentialController.js";
 
 const router = express.Router();
@@ -897,4 +898,53 @@ router.get("/templates/public", async (req, res) => {
     }
 });
 
+/**
+ * @swagger
+ * /api/credentials:
+ *   get:
+ *     summary: Get all credentials created by the authenticated admin
+ *     tags: [Admin]
+ *     parameters:
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           enum: [certificate, badge]
+ *         description: Filter by credential type
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *         description: Limit number of results
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *         description: Offset for pagination
+ *     responses:
+ *       200:
+ *         description: List of credentials retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 credentials:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                 total:
+ *                   type: integer
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+router.get("/", authenticate, getAdminCredentialsViaEvents);
+
 export default router;
+

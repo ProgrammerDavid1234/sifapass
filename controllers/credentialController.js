@@ -8,19 +8,21 @@ import sharp from 'sharp';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
+import { createCanvas } from 'canvas';
+import mongoose from 'mongoose';
 
 /**
- * Create or Import Credential
+ * Configure Cloudinary
  */
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
 });
-const blockchainHash = crypto.randomBytes(32).toString("hex");
-const qrCode = await QRCode.toDataURL(`https://sifapass.onrender.com/verify/${blockchainHash}`);
 
-
+/**
+ * Create or Import Credential
+ */
 export const createCredential = async (req, res) => {
     try {
         const { participantId, eventId, title, type } = req.body;
@@ -63,7 +65,7 @@ export const createCredential = async (req, res) => {
             .digest("hex");
 
         // Generate QR code from hash
-        const qrCode = await QRCode.toDataURL(blockchainHash);
+        const qrCode = await QRCode.toDataURL(`https://sifapass.onrender.com/verify/${blockchainHash}`);
 
         // Save to DB
         const credential = await Credential.create({
@@ -74,8 +76,7 @@ export const createCredential = async (req, res) => {
             downloadLink,
             blockchainHash,
             qrCode,
-            issuedBy: req.user.id // ✅ Make sure the logged-in Admin is issuing it
-
+            issuedBy: req.user.id
         });
 
         res
@@ -89,7 +90,66 @@ export const createCredential = async (req, res) => {
     }
 };
 
+/**
+ * Create Credential with Custom Design
+ */
+export const createCredentialWithDesign = async (req, res) => {
+    try {
+        const {
+            participantId,
+            eventId,
+            title,
+            type,
+            templateId,
+            designData,
+            participantData,
+        } = req.body;
 
+        // Validate required fields
+        if (!participantId || !eventId || !title || !type) {
+            return res.status(400).json({
+                message: "Missing required fields: participantId, eventId, title, type"
+            });
+        }
+
+        // Generate blockchain hash
+        const blockchainHash = crypto
+            .createHash("sha256")
+            .update(JSON.stringify({ participantId, eventId, title, type }) + Date.now())
+            .digest("hex");
+
+        // Generate QR code
+        const verificationUrl = `${process.env.FRONTEND_URL}/verify/${blockchainHash}`;
+        const qrCode = await QRCode.toDataURL(verificationUrl);
+
+        // Save credential
+        const credential = await Credential.create({
+            participantId,
+            eventId,
+            title,
+            type,
+            templateId,
+            designData: designData || {},
+            blockchainHash,
+            qrCode,
+            verificationUrl,
+            participantData: participantData || {},
+            issuedBy: req.user.id
+        });
+
+        res.status(201).json({
+            success: true,
+            message: `${type} created successfully`,
+            credential
+        });
+    } catch (error) {
+        console.error("Create Credential Error:", error);
+        res.status(500).json({
+            message: "Failed to create credential",
+            error: error.message
+        });
+    }
+};
 
 /**
  * Get All Credentials (for user)
@@ -102,6 +162,112 @@ export const getCredentials = async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+
+/**
+ * Get My Credentials (for participant)
+ */
+export const getMyCredentials = async (req, res) => {
+    try {
+        const participantId = req.user.id;
+
+        const credentials = await Credential.find({ participantId })
+            .populate("eventId", "title startDate location")
+            .sort({ createdAt: -1 });
+
+        res.status(200).json(credentials);
+    } catch (error) {
+        console.error("Get My Credentials Error:", error);
+        res.status(500).json({
+            message: "Failed to fetch credentials",
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Get Admin Credentials
+ */
+export const getAdminCredentials = async (req, res) => {
+    try {
+        const adminId = req.user.id;
+        const { type, limit = 50, offset = 0 } = req.query;
+
+        console.log('Fetching credentials for admin:', adminId);
+
+        // Build query to find credentials created by this admin
+        let query = { createdBy: adminId };
+
+        // Add type filter if specified
+        if (type) {
+            query.type = type;
+        }
+
+        console.log('Query:', query);
+
+        // Find credentials with populated data
+        const credentials = await Credential.find(query)
+            .populate({
+                path: 'participantId',
+                select: 'fullName name email'
+            })
+            .populate({
+                path: 'eventId',
+                select: 'title name startDate endDate'
+            })
+            .sort({ createdAt: -1 })
+            .limit(parseInt(limit))
+            .skip(parseInt(offset))
+            .lean();
+
+        console.log(`Found ${credentials.length} credentials`);
+
+        // Transform the data for frontend consumption
+        const transformedCredentials = credentials.map(credential => ({
+            _id: credential._id,
+            id: credential._id,
+            title: credential.title,
+            description: credential.description,
+            type: credential.type || credential.credentialType,
+            status: credential.status,
+            participantName: credential.participantId?.fullName || credential.participantId?.name || 'Unknown',
+            participantEmail: credential.participantId?.email,
+            eventTitle: credential.eventId?.title || credential.eventId?.name || 'Unknown Event',
+            eventDate: credential.eventId?.startDate || credential.eventId?.endDate,
+            issuedAt: credential.issuedAt,
+            createdAt: credential.createdAt,
+            updatedAt: credential.updatedAt,
+            lastModified: credential.updatedAt || credential.createdAt,
+            designData: credential.designData,
+            participantData: credential.participantData,
+            verificationUrl: credential.verificationUrl,
+            downloadUrl: credential.downloadUrl
+        }));
+
+        // Get total count for pagination
+        const totalCount = await Credential.countDocuments(query);
+
+        res.status(200).json({
+            success: true,
+            credentials: transformedCredentials,
+            total: totalCount,
+            limit: parseInt(limit),
+            offset: parseInt(offset),
+            hasMore: (parseInt(offset) + credentials.length) < totalCount
+        });
+
+    } catch (error) {
+        console.error('Error fetching admin credentials:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch credentials',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+    }
+};
+
+/**
+ * Get Credential Statistics
+ */
 export const getCredentialStats = async (req, res) => {
     try {
         const totalCredentials = await Credential.countDocuments();
@@ -116,8 +282,9 @@ export const getCredentialStats = async (req, res) => {
         res.status(500).json({ message: "Failed to fetch stats", error: err.message });
     }
 };
+
 /**
- * Edit Credential
+ * Update Credential
  */
 export const updateCredential = async (req, res) => {
     try {
@@ -137,12 +304,42 @@ export const updateCredential = async (req, res) => {
 };
 
 /**
- * Share Credential with other users
+ * Edit Credential
+ */
+export const editCredential = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, username, password, description } = req.body;
+
+        const updatedCredential = await Credential.findByIdAndUpdate(
+            id,
+            { name, username, password, description },
+            { new: true }
+        );
+
+        if (!updatedCredential) {
+            return res.status(404).json({ message: 'Credential not found' });
+        }
+
+        res.status(200).json({
+            message: 'Credential updated successfully',
+            data: updatedCredential
+        });
+    } catch (error) {
+        res.status(500).json({
+            message: 'Error updating credential',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Share Credential
  */
 export const shareCredential = async (req, res) => {
     try {
         const { id } = req.params;
-        const { userIds } = req.body; // array of users to share with
+        const { userIds } = req.body;
 
         const credential = await Credential.findByIdAndUpdate(
             id,
@@ -159,7 +356,7 @@ export const shareCredential = async (req, res) => {
 };
 
 /**
- * Verify Credential (Blockchain + QR)
+ * Verify Credential
  */
 export const verifyCredential = async (req, res) => {
     try {
@@ -176,6 +373,9 @@ export const verifyCredential = async (req, res) => {
     }
 };
 
+/**
+ * Customize Credential
+ */
 export const customizeCredential = async (req, res) => {
     try {
         const credential = await Credential.findById(req.params.id);
@@ -189,29 +389,12 @@ export const customizeCredential = async (req, res) => {
         res.status(400).json({ message: err.message });
     }
 };
-export const editCredential = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { name, username, password, description } = req.body;
 
-        const updatedCredential = await Credential.findByIdAndUpdate(
-            id,
-            { name, username, password, description },
-            { new: true } // return updated document
-        );
-
-        if (!updatedCredential) {
-            return res.status(404).json({ message: 'Credential not found' });
-        }
-
-        res.status(200).json({ message: 'Credential updated successfully', data: updatedCredential });
-    } catch (error) {
-        res.status(500).json({ message: 'Error updating credential', error: error.message });
-    }
-};
+/**
+ * Get Default Template
+ */
 export const getDefaultTemplate = async (req, res) => {
     try {
-        // Define your default credential template structure
         const defaultTemplate = {
             title: "New Credential",
             description: "Enter your credential details here...",
@@ -239,7 +422,9 @@ export const getDefaultTemplate = async (req, res) => {
     }
 };
 
-// -------------------- IMPORT CREDENTIAL --------------------
+/**
+ * Import Credential
+ */
 export const importCredential = async (req, res) => {
     try {
         const { user_id, credentials } = req.body;
@@ -254,23 +439,30 @@ export const importCredential = async (req, res) => {
             return res.status(400).json({ error: "No credentials to import" });
         }
 
+        // Note: This seems to be using MySQL syntax. 
+        // You may need to adapt this for MongoDB
         await pool.query(
             "INSERT INTO credentials (user_id, service_name, username, password) VALUES ?",
             [values]
         );
 
-        res.status(201).json({ message: "Credentials imported successfully", count: values.length });
+        res.status(201).json({
+            message: "Credentials imported successfully",
+            count: values.length
+        });
     } catch (error) {
         console.error("Error importing credentials:", error);
         res.status(500).json({ error: "Server error" });
     }
 };
-// Reconcile certificates
+
+/**
+ * Reconcile Certificates
+ */
 export const reconcileCertificates = async (req, res) => {
     try {
         const { participantId, credentialId } = req.body;
 
-        // check if credential belongs to participant
         const cred = await Credential.findById(credentialId);
         if (!cred) return res.status(404).json({ message: "Credential not found" });
 
@@ -284,34 +476,17 @@ export const reconcileCertificates = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
-/**
- * Get My Credentials (for participant)
- */
-export const getMyCredentials = async (req, res) => {
-    try {
-        const participantId = req.user.id; // From authentication middleware
 
-        const credentials = await Credential.find({ participantId })
-            .populate("eventId", "title startDate location")
-            .sort({ createdAt: -1 });
+// ==================== TEMPLATE FUNCTIONALITY ====================
 
-        res.status(200).json(credentials);
-    } catch (error) {
-        console.error("Get My Credentials Error:", error);
-        res.status(500).json({
-            message: "Failed to fetch credentials",
-            error: error.message
-        });
-    }
-};
 /**
- * Create Custom Template with Designer Data
+ * Create Template
  */
 export const createTemplate = async (req, res) => {
     try {
         const {
             name,
-            type, // 'certificate' or 'badge'
+            type,
             designData,
             backgroundSettings,
             contentSettings,
@@ -431,17 +606,14 @@ export const updateTemplate = async (req, res) => {
     }
 };
 
-// ==================== DESIGNER FUNCTIONALITY ====================
-
 /**
- * Save Design Progress (Auto-save)
+ * Save Design Progress
  */
 export const saveDesignProgress = async (req, res) => {
     try {
         const { templateId, designData } = req.body;
 
         if (templateId) {
-            // Update existing template
             await CredentialTemplate.findByIdAndUpdate(templateId, {
                 designData,
                 updatedAt: Date.now()
@@ -461,13 +633,12 @@ export const saveDesignProgress = async (req, res) => {
 };
 
 /**
- * Preview Credential Design
+ * Preview Credential
  */
 export const previewCredential = async (req, res) => {
     try {
         const { designData, participantData = {} } = req.body;
 
-        // Generate preview HTML
         const previewHtml = generateCredentialHTML(designData, participantData);
 
         res.json({
@@ -485,17 +656,72 @@ export const previewCredential = async (req, res) => {
 // ==================== EXPORT FUNCTIONALITY ====================
 
 /**
- * Export Credential as PNG
+ * Export Credential as PDF (Enhanced)
  */
+export const exportCredentialPDF = async (req, res) => {
+    try {
+        const { designData, participantData, credentialId, method = 'puppeteer' } = req.body;
 
+        if (!participantData || !participantData.name) {
+            return res.status(400).json({
+                success: false,
+                message: "Participant data is required"
+            });
+        }
+
+        let pdfBuffer;
+
+        if (method === 'pdfkit') {
+            // Use PDFKit for simple layouts
+            pdfBuffer = await generatePDFWithPDFKit(designData, participantData, credentialId);
+        } else {
+            // Use Puppeteer for complex HTML layouts (default)
+            const html = generateCredentialHTML(designData, participantData);
+            pdfBuffer = await generatePDFFromHTML(html);
+        }
+
+        // Upload to Cloudinary
+        const uploadResult = await new Promise((resolve, reject) => {
+            cloudinary.uploader.upload_stream(
+                { resource_type: "raw", folder: "credentials/exports", format: "pdf" },
+                (error, result) => {
+                    if (error) return reject(error);
+                    resolve(result);
+                }
+            ).end(pdfBuffer);
+        });
+
+        // Update credential with export link
+        if (credentialId && mongoose.Types.ObjectId.isValid(credentialId)) {
+            await Credential.findByIdAndUpdate(credentialId, {
+                $set: { "exportLinks.pdf": uploadResult.secure_url }
+            });
+        }
+
+        res.json({
+            success: true,
+            exportUrl: uploadResult.secure_url,
+            message: "PDF exported successfully"
+        });
+
+    } catch (error) {
+        console.error('PDF Export Error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to export PDF',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Export Credential as PNG (Enhanced)
+ */
 export const exportCredentialPNG = async (req, res) => {
     try {
         console.log('Starting PNG export...');
-        console.log('Request body keys:', Object.keys(req.body || {}));
+        const { designData, participantData, credentialId, method = 'puppeteer' } = req.body;
 
-        const { designData, participantData, credentialId } = req.body;
-
-        // Validate input data
         if (!designData) {
             return res.status(400).json({
                 success: false,
@@ -510,14 +736,18 @@ export const exportCredentialPNG = async (req, res) => {
             });
         }
 
-        console.log('Generating HTML...');
-        const html = generateCredentialHTML(designData, participantData);
+        let pngBuffer;
 
-        console.log('Converting HTML to PNG...');
-        const pngBuffer = await generatePNGFromHTML(html);
+        if (method === 'canvas') {
+            // Use Canvas for simple layouts
+            pngBuffer = await generatePNGWithCanvas(designData, participantData, credentialId);
+        } else {
+            // Use Puppeteer for complex HTML layouts (default)
+            const html = generateCredentialHTML(designData, participantData);
+            pngBuffer = await generatePNGFromHTML(html);
+        }
 
         console.log('PNG generated successfully, size:', pngBuffer.length, 'bytes');
-        console.log('Uploading to Cloudinary...');
 
         // Upload to Cloudinary with timeout handling
         const uploadResult = await Promise.race([
@@ -534,26 +764,23 @@ export const exportCredentialPNG = async (req, res) => {
                             console.error('Cloudinary upload error:', error);
                             return reject(error);
                         }
-                        console.log('Cloudinary upload success:', result.secure_url);
                         resolve(result);
                     }
                 ).end(pngBuffer);
             }),
             new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Cloudinary upload timeout after 70s')), 70000)
+                setTimeout(() => reject(new Error('Cloudinary upload timeout')), 70000)
             )
         ]);
 
-        // Update credential with export link if credentialId provided
+        // Update credential with export link
         if (credentialId && mongoose.Types.ObjectId.isValid(credentialId)) {
             try {
                 await Credential.findByIdAndUpdate(credentialId, {
                     $set: { "exportLinks.png": uploadResult.secure_url }
                 });
-                console.log('Credential updated with PNG link');
             } catch (updateError) {
                 console.error('Failed to update credential:', updateError);
-                // Don't fail the request if credential update fails
             }
         }
 
@@ -569,23 +796,37 @@ export const exportCredentialPNG = async (req, res) => {
         res.status(500).json({
             success: false,
             message: "Failed to export PNG",
-            error: error.message,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            error: error.message
         });
     }
 };
 
-
 /**
- * Export Credential as JPEG
+ * Export Credential as JPEG (Enhanced)
  */
 export const exportCredentialJPEG = async (req, res) => {
     try {
-        const { designData, participantData, credentialId } = req.body;
+        const { designData, participantData, credentialId, method = 'puppeteer' } = req.body;
 
-        const html = generateCredentialHTML(designData, participantData);
-        const jpegBuffer = await generateJPEGFromHTML(html);
+        if (!participantData || !participantData.name) {
+            return res.status(400).json({
+                success: false,
+                message: "Participant data is required"
+            });
+        }
 
+        let jpegBuffer;
+
+        if (method === 'canvas') {
+            // Use Canvas for simple layouts
+            jpegBuffer = await generateJPEGWithCanvas(designData, participantData, credentialId);
+        } else {
+            // Use Puppeteer for complex HTML layouts (default)
+            const html = generateCredentialHTML(designData, participantData);
+            jpegBuffer = await generateJPEGFromHTML(html);
+        }
+
+        // Upload to Cloudinary
         const uploadResult = await new Promise((resolve, reject) => {
             cloudinary.uploader.upload_stream(
                 { resource_type: "image", folder: "credentials/exports", format: "jpg" },
@@ -596,7 +837,8 @@ export const exportCredentialJPEG = async (req, res) => {
             ).end(jpegBuffer);
         });
 
-        if (credentialId) {
+        // Update credential with export link
+        if (credentialId && mongoose.Types.ObjectId.isValid(credentialId)) {
             await Credential.findByIdAndUpdate(credentialId, {
                 $set: { "exportLinks.jpeg": uploadResult.secure_url }
             });
@@ -607,50 +849,12 @@ export const exportCredentialJPEG = async (req, res) => {
             exportUrl: uploadResult.secure_url,
             message: "JPEG exported successfully"
         });
+
     } catch (error) {
         console.error("JPEG Export Error:", error);
         res.status(500).json({
+            success: false,
             message: "Failed to export JPEG",
-            error: error.message
-        });
-    }
-};
-
-/**
- * Export Credential as PDF
- */
-export const exportCredentialPDF = async (req, res) => {
-    try {
-        const { designData, participantData, credentialId } = req.body;
-
-        const html = generateCredentialHTML(designData, participantData);
-        const pdfBuffer = await generatePDFFromHTML(html);
-
-        const uploadResult = await new Promise((resolve, reject) => {
-            cloudinary.uploader.upload_stream(
-                { resource_type: "raw", folder: "credentials/exports", format: "pdf" },
-                (error, result) => {
-                    if (error) return reject(error);
-                    resolve(result);
-                }
-            ).end(pdfBuffer);
-        });
-
-        if (credentialId) {
-            await Credential.findByIdAndUpdate(credentialId, {
-                $set: { "exportLinks.pdf": uploadResult.secure_url }
-            });
-        }
-
-        res.json({
-            success: true,
-            exportUrl: uploadResult.secure_url,
-            message: "PDF exported successfully"
-        });
-    } catch (error) {
-        console.error("PDF Export Error:", error);
-        res.status(500).json({
-            message: "Failed to export PDF",
             error: error.message
         });
     }
@@ -670,13 +874,8 @@ function generateCredentialHTML(designData, participantData = {}) {
         }
 
         const { elements = [], canvas = {}, background = {} } = designData;
-
-        // Set default canvas dimensions if not provided
         const canvasWidth = canvas.width || 800;
         const canvasHeight = canvas.height || 600;
-
-        console.log(`Canvas dimensions: ${canvasWidth}x${canvasHeight}`);
-        console.log(`Elements count: ${elements.length}`);
 
         let backgroundStyle = '';
         if (background.type === 'gradient') {
@@ -685,11 +884,11 @@ function generateCredentialHTML(designData, participantData = {}) {
             const secondary = background.secondaryColor || '#f0f0f0';
             backgroundStyle = `background: linear-gradient(${direction}, ${primary}, ${secondary});`;
         } else if (background.type === 'solid') {
-            backgroundStyle = `background-color: ${background.color || '#ffffff'};`;
+            backgroundStyle = `background-color: ${background.color || background.primaryColor || '#ffffff'};`;
         } else if (background.type === 'image' && background.imageUrl) {
             backgroundStyle = `background-image: url('${background.imageUrl}'); background-size: cover; background-position: center;`;
         } else {
-            backgroundStyle = 'background-color: #ffffff;'; // Default white background
+            backgroundStyle = 'background-color: #ffffff;';
         }
 
         let elementsHtml = '';
@@ -725,11 +924,8 @@ function generateCredentialHTML(designData, participantData = {}) {
                 } else if (element.type === 'qrcode' && element.qrCodeUrl) {
                     elementsHtml += `<div style="${elementStyle}"><img src="${element.qrCodeUrl}" alt="QR Code" style="width: 100%; height: 100%;" /></div>`;
                 }
-
-                console.log(`Processed element ${index + 1}: ${element.type}`);
             } catch (elementError) {
                 console.error(`Error processing element ${index}:`, elementError);
-                // Skip problematic elements instead of failing the entire generation
             }
         });
 
@@ -766,15 +962,12 @@ function generateCredentialHTML(designData, participantData = {}) {
             </html>
         `;
 
-        console.log('HTML generated successfully');
         return htmlContent;
-
     } catch (error) {
         console.error('HTML Generation Error:', error);
         throw new Error(`Failed to generate HTML: ${error.message}`);
     }
 }
-
 
 /**
  * Generate PNG from HTML using Puppeteer
@@ -784,11 +977,9 @@ async function generatePNGFromHTML(html) {
     try {
         console.log('Launching Puppeteer browser...');
 
-        // Try to find Chrome executable paths for different environments
         const possiblePaths = [
             '/usr/bin/google-chrome-stable',
             '/usr/bin/google-chrome',
-            '/usr/bin/chromium-browser',
             '/usr/bin/chromium',
             process.env.PUPPETEER_EXECUTABLE_PATH,
             process.env.CHROME_BIN,
@@ -800,7 +991,6 @@ async function generatePNGFromHTML(html) {
         let executablePath;
 
         // Check if we can find Chrome
-        const fs = require('fs');
         for (const path of possiblePaths) {
             if (path.includes('*')) {
                 // Handle wildcard paths
@@ -885,211 +1075,405 @@ async function generatePNGFromHTML(html) {
     }
 }
 
-
 /**
  * Generate JPEG from HTML using Puppeteer
  */
 async function generateJPEGFromHTML(html) {
-    const browser = await puppeteer.launch({
-        headless: "new",
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
-    });
+    let browser;
+    try {
+        browser = await puppeteer.launch({
+            headless: "new",
+            args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        });
 
-    const page = await browser.newPage();
-    await page.setContent(html);
-    await page.setViewport({ width: 800, height: 600 });
+        const page = await browser.newPage();
+        await page.setContent(html, { waitUntil: 'networkidle0' });
+        await page.setViewport({ width: 800, height: 600 });
 
-    const screenshot = await page.screenshot({
-        type: "jpeg",
-        quality: 90,
-        fullPage: true,
-        omitBackground: false,
-    });
+        const screenshot = await page.screenshot({
+            type: "jpeg",
+            quality: 90,
+            fullPage: true,
+            omitBackground: false,
+        });
 
-    await browser.close();
-    return screenshot;
+        return screenshot;
+    } finally {
+        if (browser) {
+            await browser.close();
+        }
+    }
 }
+
 /**
  * Generate PDF from HTML using Puppeteer
  */
 async function generatePDFFromHTML(html) {
-    const browser = await puppeteer.launch({
-        headless: "new",
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
-    });
+    let browser;
+    try {
+        browser = await puppeteer.launch({
+            headless: "new",
+            args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        });
 
-    const page = await browser.newPage();
-    await page.setContent(html);
+        const page = await browser.newPage();
+        await page.setContent(html, { waitUntil: 'networkidle0' });
 
-    const pdf = await page.pdf({
-        format: "A4",
-        landscape: true,
-        printBackground: true,
-        margin: {
-            top: "0.5in",
-            right: "0.5in",
-            bottom: "0.5in",
-            left: "0.5in",
-        },
-    });
+        const pdf = await page.pdf({
+            format: "A4",
+            landscape: true,
+            printBackground: true,
+            margin: {
+                top: "0.5in",
+                right: "0.5in",
+                bottom: "0.5in",
+                left: "0.5in",
+            },
+        });
 
-    await browser.close();
-    return pdf;
+        return pdf;
+    } finally {
+        if (browser) {
+            await browser.close();
+        }
+    }
 }
 
-// ==================== ENHANCED CREDENTIAL CREATION ====================
+/**
+ * Generate PDF using PDFKit (Alternative method for simple layouts)
+ */
+async function generatePDFWithPDFKit(designData, participantData, credentialId) {
+    return new Promise((resolve, reject) => {
+        try {
+            const doc = new PDFDocument({
+                size: 'A4',
+                layout: 'landscape',
+                margins: { top: 50, bottom: 50, left: 50, right: 50 }
+            });
+
+            const buffers = [];
+            doc.on('data', buffers.push.bind(buffers));
+            doc.on('end', () => {
+                const pdfBuffer = Buffer.concat(buffers);
+                resolve(pdfBuffer);
+            });
+
+            // Add background color or gradient
+            if (designData?.background?.type === 'gradient') {
+                doc.linearGradient(0, 0, doc.page.width, doc.page.height)
+                    .stop(0, designData.background.primaryColor || '#3498db')
+                    .stop(1, designData.background.secondaryColor || '#e74c3c');
+                doc.rect(0, 0, doc.page.width, doc.page.height).fill();
+            } else if (designData?.background?.type === 'solid') {
+                doc.rect(0, 0, doc.page.width, doc.page.height)
+                    .fill(designData.background.primaryColor || '#ffffff');
+            }
+
+            // Add title
+            doc.fillColor('#000000')
+                .fontSize(36)
+                .font('Helvetica-Bold')
+                .text(designData?.content?.titleText || 'Certificate of Achievement', 50, 150, {
+                    width: doc.page.width - 100,
+                    align: 'center'
+                });
+
+            // Add participant name
+            doc.fontSize(24)
+                .font('Helvetica')
+                .text(`This is to certify that`, 50, 220, {
+                    width: doc.page.width - 100,
+                    align: 'center'
+                });
+
+            doc.fontSize(32)
+                .font('Helvetica-Bold')
+                .fillColor('#2c3e50')
+                .text(participantData.name, 50, 260, {
+                    width: doc.page.width - 100,
+                    align: 'center'
+                });
+
+            // Add event description
+            doc.fontSize(18)
+                .font('Helvetica')
+                .fillColor('#000000')
+                .text(designData?.content?.eventDescription || `has successfully completed ${participantData.eventTitle || 'the event'}`, 50, 320, {
+                    width: doc.page.width - 100,
+                    align: 'center'
+                });
+
+            // Add date
+            const date = new Date().toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            doc.fontSize(14)
+                .text(`Issued on ${date}`, 50, 400, {
+                    width: doc.page.width - 100,
+                    align: 'center'
+                });
+
+            // Add QR code if available
+            if (designData?.verification?.includeQRCode !== false && credentialId) {
+                QRCode.toBuffer(`Credential ID: ${credentialId}\nParticipant: ${participantData.name}\nEvent: ${participantData.eventTitle || 'N/A'}`, { width: 100 })
+                    .then(qrCodeBuffer => {
+                        doc.image(qrCodeBuffer, doc.page.width - 150, doc.page.height - 150, { width: 100, height: 100 });
+
+                        // Add border
+                        doc.rect(25, 25, doc.page.width - 50, doc.page.height - 50)
+                            .stroke('#cccccc');
+
+                        doc.end();
+                    })
+                    .catch(qrError => {
+                        console.error('QR code generation failed:', qrError);
+
+                        // Add border
+                        doc.rect(25, 25, doc.page.width - 50, doc.page.height - 50)
+                            .stroke('#cccccc');
+
+                        doc.end();
+                    });
+            } else {
+                // Add border
+                doc.rect(25, 25, doc.page.width - 50, doc.page.height - 50)
+                    .stroke('#cccccc');
+
+                doc.end();
+            }
+
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
 
 /**
- * Create Credential with Custom Design
+ * Generate PNG using Canvas (Alternative method for simple layouts)
  */
-export const createCredentialWithDesign = async (req, res) => {
+async function generatePNGWithCanvas(designData, participantData, credentialId) {
+    const canvas = createCanvas(1200, 800);
+    const ctx = canvas.getContext('2d');
+
+    // Add background
+    if (designData?.background?.type === 'gradient') {
+        const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+        gradient.addColorStop(0, designData.background.primaryColor || '#3498db');
+        gradient.addColorStop(1, designData.background.secondaryColor || '#e74c3c');
+        ctx.fillStyle = gradient;
+    } else {
+        ctx.fillStyle = designData?.background?.primaryColor || '#ffffff';
+    }
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Add border
+    ctx.strokeStyle = '#cccccc';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
+
+    // Add title
+    ctx.fillStyle = '#000000';
+    ctx.font = 'bold 48px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(designData?.content?.titleText || 'Certificate of Achievement', canvas.width / 2, 150);
+
+    // Add participant name
+    ctx.font = '24px Arial';
+    ctx.fillText('This is to certify that', canvas.width / 2, 250);
+
+    ctx.font = 'bold 36px Arial';
+    ctx.fillStyle = '#2c3e50';
+    ctx.fillText(participantData.name, canvas.width / 2, 320);
+
+    // Add event description
+    ctx.font = '20px Arial';
+    ctx.fillStyle = '#000000';
+    ctx.fillText(designData?.content?.eventDescription || `has successfully completed ${participantData.eventTitle || 'the event'}`, canvas.width / 2, 400);
+
+    // Add date
+    const date = new Date().toLocaleDateString();
+    ctx.font = '16px Arial';
+    ctx.fillText(`Issued on ${date}`, canvas.width / 2, 450);
+
+    // Add QR code if available
+    if (designData?.verification?.includeQRCode !== false && credentialId) {
+        try {
+            const qrCodeData = `Credential ID: ${credentialId}\nParticipant: ${participantData.name}`;
+            const qrCodeBuffer = await QRCode.toBuffer(qrCodeData, { width: 100 });
+            // Note: Loading image in Canvas requires additional handling
+            // This is a simplified version
+        } catch (qrError) {
+            console.error('QR code generation failed:', qrError);
+        }
+    }
+
+    return canvas.toBuffer('image/png');
+}
+
+/**
+ * Generate JPEG using Canvas (Alternative method for simple layouts)
+ */
+async function generateJPEGWithCanvas(designData, participantData, credentialId) {
+    const canvas = createCanvas(1200, 800);
+    const ctx = canvas.getContext('2d');
+
+    // Add white background first (JPEG doesn't support transparency)
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Add background
+    if (designData?.background?.type === 'gradient') {
+        const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+        gradient.addColorStop(0, designData.background.primaryColor || '#3498db');
+        gradient.addColorStop(1, designData.background.secondaryColor || '#e74c3c');
+        ctx.fillStyle = gradient;
+    } else {
+        ctx.fillStyle = designData?.background?.primaryColor || '#ffffff';
+    }
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Add border
+    ctx.strokeStyle = '#cccccc';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
+
+    // Add title
+    ctx.fillStyle = '#000000';
+    ctx.font = 'bold 48px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(designData?.content?.titleText || 'Certificate of Achievement', canvas.width / 2, 150);
+
+    // Add participant name
+    ctx.font = '24px Arial';
+    ctx.fillText('This is to certify that', canvas.width / 2, 250);
+
+    ctx.font = 'bold 36px Arial';
+    ctx.fillStyle = '#2c3e50';
+    ctx.fillText(participantData.name, canvas.width / 2, 320);
+
+    // Add event description
+    ctx.font = '20px Arial';
+    ctx.fillStyle = '#000000';
+    ctx.fillText(designData?.content?.eventDescription || `has successfully completed ${participantData.eventTitle || 'the event'}`, canvas.width / 2, 400);
+
+    // Add date
+    const date = new Date().toLocaleDateString();
+    ctx.font = '16px Arial';
+    ctx.fillText(`Issued on ${date}`, canvas.width / 2, 450);
+
+    return canvas.toBuffer('image/jpeg', { quality: 0.9 });
+}
+
+// ==================== BATCH OPERATIONS ====================
+
+/**
+ * Batch Export Credentials
+ */
+export const batchExportCredentials = async (req, res) => {
     try {
-        const {
-            participantId,
-            eventId,
-            title,
-            type,
-            templateId,
-            designData,
-            participantData,
+        const { credentialIds, format = 'png', zipFileName } = req.body;
 
-        } = req.body;
-
-        // Validate required fields
-        if (!participantId || !eventId || !title || !type) {
+        if (!Array.isArray(credentialIds) || credentialIds.length === 0) {
             return res.status(400).json({
-                message: "Missing required fields: participantId, eventId, title, type"
+                success: false,
+                message: "Credential IDs array is required"
             });
         }
 
-        // Generate blockchain hash
-        const blockchainHash = crypto
-            .createHash("sha256")
-            .update(JSON.stringify({ participantId, eventId, title, type }) + Date.now())
-            .digest("hex");
+        const credentials = await Credential.find({ _id: { $in: credentialIds } })
+            .populate('participantId', 'name fullName')
+            .populate('eventId', 'title name');
 
-        // Generate QR code
-        const verificationUrl = `${process.env.FRONTEND_URL}/verify/${blockchainHash}`;
-        const qrCode = await QRCode.toDataURL(verificationUrl);
+        if (credentials.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "No credentials found"
+            });
+        }
 
-        // Save credential
-        const credential = await Credential.create({
-            participantId,
-            eventId,
-            title,
-            type,
-            templateId,
-            designData: designData || {},
-            blockchainHash,
-            qrCode,
-            verificationUrl,
-            participantData: participantData || {},
-            issuedBy: req.user.id // ✅ Correct placement here
+        const exportResults = [];
+        const errors = [];
 
-        });
+        for (const credential of credentials) {
+            try {
+                const participantData = {
+                    name: credential.participantId?.fullName || credential.participantId?.name || 'Unknown',
+                    eventTitle: credential.eventId?.title || credential.eventId?.name || 'Unknown Event'
+                };
 
-        res.status(201).json({
+                let exportUrl;
+                if (format === 'pdf') {
+                    const html = generateCredentialHTML(credential.designData, participantData);
+                    const buffer = await generatePDFFromHTML(html);
+                    const uploadResult = await uploadToCloudinary(buffer, 'raw', 'pdf');
+                    exportUrl = uploadResult.secure_url;
+                } else if (format === 'jpeg') {
+                    const html = generateCredentialHTML(credential.designData, participantData);
+                    const buffer = await generateJPEGFromHTML(html);
+                    const uploadResult = await uploadToCloudinary(buffer, 'image', 'jpg');
+                    exportUrl = uploadResult.secure_url;
+                } else {
+                    const html = generateCredentialHTML(credential.designData, participantData);
+                    const buffer = await generatePNGFromHTML(html);
+                    const uploadResult = await uploadToCloudinary(buffer, 'image', 'png');
+                    exportUrl = uploadResult.secure_url;
+                }
+
+                exportResults.push({
+                    credentialId: credential._id,
+                    participantName: participantData.name,
+                    exportUrl
+                });
+
+            } catch (error) {
+                console.error(`Error exporting credential ${credential._id}:`, error);
+                errors.push({
+                    credentialId: credential._id,
+                    error: error.message
+                });
+            }
+        }
+
+        res.json({
             success: true,
-            message: `${type} created successfully`,
-            credential
+            message: `Batch export completed. ${exportResults.length} succeeded, ${errors.length} failed.`,
+            exports: exportResults,
+            errors
         });
+
     } catch (error) {
-        console.error("Create Credential Error:", error);
+        console.error("Batch Export Error:", error);
         res.status(500).json({
-            message: "Failed to create credential",
+            success: false,
+            message: "Failed to batch export credentials",
             error: error.message
         });
     }
 };
 
-export const getAdminCredentials = async (req, res) => {
-    try {
-        const adminId = req.user.id;
-        const { type, limit = 50, offset = 0 } = req.query;
-
-        console.log('Fetching credentials for admin:', adminId);
-
-        // Build query to find credentials created by this admin
-        let query = {};
-
-        // Option 1: If credentials have a direct createdBy field
-        query.createdBy = adminId;
-
-        // Option 2: If you need to find through events
-        // const adminEvents = await Event.find({ createdBy: adminId }).select('_id');
-        // const eventIds = adminEvents.map(event => event._id);
-        // query.eventId = { $in: eventIds };
-
-        // Add type filter if specified
-        if (type) {
-            query.type = type;
-        }
-
-        console.log('Query:', query);
-
-        // Find credentials with populated data
-        const credentials = await Credential.find(query)
-            .populate({
-                path: 'participantId',
-                select: 'fullName name email'
-            })
-            .populate({
-                path: 'eventId',
-                select: 'title name startDate endDate'
-            })
-            .sort({ createdAt: -1 }) // Most recent first
-            .limit(parseInt(limit))
-            .skip(parseInt(offset))
-            .lean();
-
-        console.log(`Found ${credentials.length} credentials`);
-
-        // Transform the data for frontend consumption
-        const transformedCredentials = credentials.map(credential => ({
-            _id: credential._id,
-            id: credential._id,
-            title: credential.title,
-            description: credential.description,
-            type: credential.type || credential.credentialType,
-            status: credential.status,
-            participantName: credential.participantId?.fullName || credential.participantId?.name || 'Unknown',
-            participantEmail: credential.participantId?.email,
-            eventTitle: credential.eventId?.title || credential.eventId?.name || 'Unknown Event',
-            eventDate: credential.eventId?.startDate || credential.eventId?.endDate,
-            issuedAt: credential.issuedAt,
-            createdAt: credential.createdAt,
-            updatedAt: credential.updatedAt,
-            lastModified: credential.updatedAt || credential.createdAt,
-            designData: credential.designData,
-            participantData: credential.participantData,
-            verificationUrl: credential.verificationUrl,
-            downloadUrl: credential.downloadUrl
-        }));
-
-        // Get total count for pagination
-        const totalCount = await Credential.countDocuments(query);
-
-        res.status(200).json({
-            success: true,
-            credentials: transformedCredentials,
-            total: totalCount,
-            limit: parseInt(limit),
-            offset: parseInt(offset),
-            hasMore: (parseInt(offset) + credentials.length) < totalCount
-        });
-
-    } catch (error) {
-        console.error('Error fetching admin credentials:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch credentials',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-        });
-    }
-};
-
+/**
+ * Helper function to upload to Cloudinary
+ */
+async function uploadToCloudinary(buffer, resourceType, format) {
+    return new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+            {
+                resource_type: resourceType,
+                folder: "credentials/exports",
+                format: format,
+                timeout: 60000
+            },
+            (error, result) => {
+                if (error) return reject(error);
+                resolve(result);
+            }
+        ).end(buffer);
+    });
+}
 // Alternative implementation if credentials are linked through events
 export const getAdminCredentialsViaEvents = async (req, res) => {
     try {
@@ -1173,12 +1557,42 @@ export const getAdminCredentialsViaEvents = async (req, res) => {
 };
 
 
+
+// Export all functions
 export default {
+    // Basic CRUD
     createCredential,
+    createCredentialWithDesign,
     getCredentials,
+    getMyCredentials,
+    getAdminCredentials,
+    getCredentialStats,
     updateCredential,
+    editCredential,
     shareCredential,
     verifyCredential,
     customizeCredential,
-    editCredential
+
+
+    // Template management
+    createTemplate,
+    getTemplates,
+    getTemplate,
+    updateTemplate,
+    getDefaultTemplate,
+
+    // Design functionality
+    saveDesignProgress,
+    previewCredential,
+
+    // Export functionality
+    exportCredentialPDF,
+    exportCredentialPNG,
+    exportCredentialJPEG,
+    batchExportCredentials,
+
+    // Import and reconcile
+    importCredential,
+    reconcileCertificates
 };
+'/usr/bin/chromium'

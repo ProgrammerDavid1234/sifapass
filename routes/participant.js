@@ -10,6 +10,7 @@ import Event from "../models/Event.js";
 import { exportParticipants } from "../controllers/participantController.js";
 const router = express.Router();
 import { authenticate } from "../middleware/auth.js";
+
 /**
  * @swagger
  * /api/participants/register:
@@ -61,10 +62,26 @@ router.post("/register", async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
+        // Split fullName into firstName and lastName for frontend compatibility
+        const nameParts = fullName.trim().split(' ');
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || '';
+
         const newParticipant = new Participant({
             fullName,
+            firstName,
+            lastName,
             email,
             password: hashedPassword,
+            // Initialize settings for frontend compatibility
+            settings: {
+                emailNotifications: true,
+                pushNotifications: true,
+                eventReminders: true,
+                credentialUpdates: true,
+                twoFactorEnabled: false
+            },
+            preferences: {}
         });
 
         await newParticipant.save();
@@ -74,6 +91,8 @@ router.post("/register", async (req, res) => {
             participant: {
                 id: newParticipant._id,
                 fullName: newParticipant.fullName,
+                firstName: newParticipant.firstName,
+                lastName: newParticipant.lastName,
                 email: newParticipant.email,
             },
         });
@@ -136,6 +155,8 @@ router.post("/login", async (req, res) => {
             participant: {
                 id: participant._id,
                 fullName: participant.fullName,
+                firstName: participant.firstName,
+                lastName: participant.lastName,
                 email: participant.email,
             },
         });
@@ -239,7 +260,6 @@ router.post("/reset-password/:token", async (req, res) => {
     res.json({ message: "Password reset successful" });
 });
 
-
 /**
  * @swagger
  * /api/participants/search:
@@ -262,10 +282,12 @@ router.get("/search", async (req, res) => {
         const { q } = req.query;
         const participants = await Participant.find({
             $or: [
-                { name: { $regex: q, $options: "i" } },
+                { fullName: { $regex: q, $options: "i" } },
+                { firstName: { $regex: q, $options: "i" } },
+                { lastName: { $regex: q, $options: "i" } },
                 { email: { $regex: q, $options: "i" } },
             ],
-        });
+        }).select('-password'); // Exclude password from results
         res.json(participants);
     } catch (err) {
         res.status(500).json({ error: "Failed to search participants" });
@@ -293,9 +315,32 @@ router.get("/search", async (req, res) => {
  */
 router.get("/:id", async (req, res) => {
     try {
-        const participant = await Participant.findById(req.params.id);
-        if (!participant) return res.status(404).json({ error: "Not found" });
-        res.json(participant);
+        const participant = await Participant.findById(req.params.id).select('-password');
+        if (!participant) return res.status(404).json({ error: "Participant not found" });
+        
+        // Return data in format expected by frontend
+        res.json({
+            id: participant._id,
+            firstName: participant.firstName || '',
+            lastName: participant.lastName || '',
+            fullName: participant.fullName || `${participant.firstName} ${participant.lastName}`.trim(),
+            email: participant.email || '',
+            phone: participant.phone || '',
+            bio: participant.bio || '',
+            profilePicture: participant.profilePicture || '',
+            settings: participant.settings || {
+                emailNotifications: true,
+                pushNotifications: true,
+                eventReminders: true,
+                credentialUpdates: true,
+                twoFactorEnabled: false
+            },
+            preferences: participant.preferences || {},
+            events: participant.events || [],
+            credentials: participant.credentials || [],
+            createdAt: participant.createdAt,
+            updatedAt: participant.updatedAt
+        });
     } catch (err) {
         res.status(500).json({ error: "Failed to fetch participant" });
     }
@@ -320,20 +365,257 @@ router.get("/:id", async (req, res) => {
  *         application/json:
  *           schema:
  *             type: object
+ *             properties:
+ *               firstName:
+ *                 type: string
+ *               lastName:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *               bio:
+ *                 type: string
+ *               profilePicture:
+ *                 type: string
  *     responses:
  *       200:
  *         description: Participant updated
  */
 router.put("/:id", authenticate, async (req, res) => {
     try {
+        const { firstName, lastName, email, phone, bio, profilePicture } = req.body;
+        
+        // Build update object
+        const updateData = {};
+        if (firstName !== undefined) updateData.firstName = firstName;
+        if (lastName !== undefined) updateData.lastName = lastName;
+        if (email !== undefined) updateData.email = email;
+        if (phone !== undefined) updateData.phone = phone;
+        if (bio !== undefined) updateData.bio = bio;
+        if (profilePicture !== undefined) updateData.profilePicture = profilePicture;
+        
+        // Update fullName if firstName or lastName changed
+        if (firstName !== undefined || lastName !== undefined) {
+            const participant = await Participant.findById(req.params.id);
+            const newFirstName = firstName !== undefined ? firstName : participant.firstName;
+            const newLastName = lastName !== undefined ? lastName : participant.lastName;
+            updateData.fullName = `${newFirstName} ${newLastName}`.trim();
+        }
+
         const participant = await Participant.findByIdAndUpdate(
             req.params.id,
-            req.body,
-            { new: true }
+            updateData,
+            { new: true, select: '-password' }
         );
-        res.json(participant);
+
+        if (!participant) {
+            return res.status(404).json({ error: "Participant not found" });
+        }
+
+        res.json({
+            message: "Profile updated successfully",
+            participant: {
+                id: participant._id,
+                firstName: participant.firstName,
+                lastName: participant.lastName,
+                fullName: participant.fullName,
+                email: participant.email,
+                phone: participant.phone,
+                bio: participant.bio,
+                profilePicture: participant.profilePicture
+            }
+        });
     } catch (err) {
+        if (err.code === 11000 && err.keyPattern?.email) {
+            return res.status(400).json({ error: "Email already exists" });
+        }
         res.status(500).json({ error: "Failed to update participant" });
+    }
+});
+
+/**
+ * @swagger
+ * /api/participants/{id}/change-password:
+ *   put:
+ *     summary: Change participant password
+ *     tags: [Participants]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Participant ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - currentPassword
+ *               - newPassword
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *               newPassword:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Password changed successfully
+ *       400:
+ *         description: Invalid current password or validation error
+ *       404:
+ *         description: Participant not found
+ */
+router.put("/:id/change-password", authenticate, async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({ message: "Current password and new password are required" });
+        }
+
+        if (newPassword.length < 8) {
+            return res.status(400).json({ message: "New password must be at least 8 characters long" });
+        }
+
+        const participant = await Participant.findById(req.params.id);
+        if (!participant) {
+            return res.status(404).json({ message: "Participant not found" });
+        }
+
+        // Verify current password
+        const isCurrentPasswordValid = await bcrypt.compare(currentPassword, participant.password);
+        if (!isCurrentPasswordValid) {
+            return res.status(400).json({ message: "Current password is incorrect" });
+        }
+
+        // Hash and save new password
+        const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+        participant.password = hashedNewPassword;
+        await participant.save();
+
+        res.json({ message: "Password changed successfully" });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to change password" });
+    }
+});
+
+/**
+ * @swagger
+ * /api/participants/{id}/settings:
+ *   get:
+ *     summary: Get participant settings
+ *     tags: [Participants]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Participant ID
+ *     responses:
+ *       200:
+ *         description: Participant settings retrieved successfully
+ *   put:
+ *     summary: Update participant settings
+ *     tags: [Participants]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Participant ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               emailNotifications:
+ *                 type: boolean
+ *               pushNotifications:
+ *                 type: boolean
+ *               eventReminders:
+ *                 type: boolean
+ *               credentialUpdates:
+ *                 type: boolean
+ *               twoFactorEnabled:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Settings updated successfully
+ */
+router.get("/:id/settings", authenticate, async (req, res) => {
+    try {
+        const participant = await Participant.findById(req.params.id).select('settings preferences');
+        if (!participant) return res.status(404).json({ error: "Participant not found" });
+
+        const defaultSettings = {
+            emailNotifications: true,
+            pushNotifications: true,
+            eventReminders: true,
+            credentialUpdates: true,
+            twoFactorEnabled: false
+        };
+
+        res.json({
+            ...defaultSettings,
+            ...participant.settings,
+            preferences: participant.preferences || {}
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.put("/:id/settings", authenticate, async (req, res) => {
+    try {
+        const { 
+            emailNotifications, 
+            pushNotifications, 
+            eventReminders, 
+            credentialUpdates, 
+            twoFactorEnabled,
+            ...preferences 
+        } = req.body;
+
+        const settingsUpdate = {
+            settings: {
+                emailNotifications: emailNotifications !== undefined ? emailNotifications : true,
+                pushNotifications: pushNotifications !== undefined ? pushNotifications : true,
+                eventReminders: eventReminders !== undefined ? eventReminders : true,
+                credentialUpdates: credentialUpdates !== undefined ? credentialUpdates : true,
+                twoFactorEnabled: twoFactorEnabled !== undefined ? twoFactorEnabled : false
+            }
+        };
+
+        // Add preferences if provided
+        if (Object.keys(preferences).length > 0) {
+            settingsUpdate.preferences = preferences;
+        }
+
+        const updated = await Participant.findByIdAndUpdate(
+            req.params.id,
+            settingsUpdate,
+            { new: true, select: 'settings preferences' }
+        );
+
+        if (!updated) {
+            return res.status(404).json({ error: "Participant not found" });
+        }
+
+        res.json({
+            message: "Settings updated successfully",
+            settings: updated.settings,
+            preferences: updated.preferences
+        });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
     }
 });
 
@@ -349,7 +631,7 @@ router.put("/:id", authenticate, async (req, res) => {
  */
 router.get("/export/all", async (req, res) => {
     try {
-        const participants = await Participant.find();
+        const participants = await Participant.find().select('-password');
         // TODO: convert to CSV/Excel
         res.json({ message: "Export successful", data: participants });
     } catch (err) {
@@ -426,6 +708,7 @@ router.put("/reconcile", authenticate, async (req, res) => {
         res.status(500).json({ error: "Failed to reconcile participants" });
     }
 });
+
 /**
  * @swagger
  * /api/participants/dashboard/{id}:
@@ -437,14 +720,20 @@ router.get("/dashboard/:id", async (req, res) => {
     try {
         const participant = await Participant.findById(req.params.id)
             .populate("credentials")
-            .populate("events");
+            .populate("events")
+            .select('-password');
 
         if (!participant) return res.status(404).json({ error: "Participant not found" });
 
         res.json({
             profile: {
-                name: participant.name,
+                name: participant.fullName || `${participant.firstName} ${participant.lastName}`.trim(),
+                firstName: participant.firstName,
+                lastName: participant.lastName,
                 email: participant.email,
+                phone: participant.phone,
+                bio: participant.bio,
+                profilePicture: participant.profilePicture,
                 preferences: participant.preferences,
             },
             credentials: participant.credentials,
@@ -727,80 +1016,6 @@ router.post("/:id/credentials/:credId/share", authenticate, async (req, res) => 
         res.status(500).json({ error: err.message });
     }
 });
-/**
- * @swagger
- * /api/participants/{id}/settings:
- *   get:
- *     summary: Get participant settings
- *     tags: [Participants]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: Participant ID
- *   put:
- *     summary: Update participant settings
- *     tags: [Participants]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: Participant ID
- */
-router.get("/:id/settings", authenticate, async (req, res) => {
-    try {
-        const participant = await Participant.findById(req.params.id);
-        if (!participant) return res.status(404).json({ error: "Participant not found" });
-
-        res.json({
-            settings: participant.settings || {},
-            preferences: participant.preferences || {}
-        });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-router.put("/:id/settings", authenticate, async (req, res) => {
-    try {
-        const updated = await Participant.findByIdAndUpdate(
-            req.params.id,
-            {
-                settings: req.body.settings || req.body,
-                preferences: req.body.preferences
-            },
-            { new: true }
-        );
-
-        if (!updated) {
-            return res.status(404).json({ error: "Participant not found" });
-        }
-
-        res.json({
-            settings: updated.settings,
-            preferences: updated.preferences
-        });
-    } catch (err) {
-        res.status(400).json({ error: err.message });
-    }
-});
-
-router.put("/:id/settings", authenticate, async (req, res) => {
-    try {
-        const updated = await Participant.findByIdAndUpdate(
-            req.params.id,
-            { settings: req.body },
-            { new: true }
-        );
-        res.json(updated.settings);
-    } catch (err) {
-        res.status(400).json({ error: err.message });
-    }
-});
 
 /**
  * @swagger
@@ -871,7 +1086,6 @@ router.get("/:id/events", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
 
 /**
  * @swagger
@@ -966,25 +1180,7 @@ router.post("/:id/events/:eventId/interact", authenticate, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-/**
- * @swagger
- * /api/participants/export/all:
- *   get:
- *     summary: Export all participants to CSV
- *     description: Retrieve all participants from the database and export them in CSV format.
- *     tags: [Participants]
- *     responses:
- *       200:
- *         description: CSV file successfully generated and downloaded.
- *         content:
- *           text/csv:
- *             schema:
- *               type: string
- *               format: binary
- *       500:
- *         description: Failed to export participants
- */
-router.get("/export/all", exportParticipants);
+
 /**
  * @swagger
  * /api/participants/{participantId}/events/{eventId}/register:

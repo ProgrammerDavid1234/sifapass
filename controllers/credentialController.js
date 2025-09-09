@@ -122,7 +122,79 @@ export const createCredentialWithDesign = async (req, res) => {
         const verificationUrl = `${process.env.FRONTEND_URL}/verify/${blockchainHash}`;
         const qrCode = await QRCode.toDataURL(verificationUrl);
 
-        // Save credential
+        console.log('Generating credential image during creation...');
+
+        // ** KEY FIX: Generate the actual credential image NOW **
+        let credentialImageUrl = null;
+        let exportLinks = {};
+
+        try {
+            // Generate the credential image using Canvas method (more reliable)
+            const pngBuffer = await generatePNGWithCanvas(
+                designData || {},
+                participantData || {},
+                blockchainHash // Use hash as temporary ID
+            );
+
+            // Upload the generated image to Cloudinary
+            const uploadResult = await new Promise((resolve, reject) => {
+                cloudinary.uploader.upload_stream(
+                    {
+                        resource_type: "image",
+                        folder: "credentials/generated",
+                        format: "png",
+                        public_id: `credential_${blockchainHash}`,
+                        overwrite: true
+                    },
+                    (error, result) => {
+                        if (error) {
+                            console.error('Image upload error:', error);
+                            return reject(error);
+                        }
+                        resolve(result);
+                    }
+                ).end(pngBuffer);
+            });
+
+            credentialImageUrl = uploadResult.secure_url;
+            exportLinks.png = uploadResult.secure_url;
+
+            console.log('Credential image generated and uploaded:', credentialImageUrl);
+
+            // Also generate PDF version
+            try {
+                const html = generateCredentialHTML(designData, participantData);
+                const pdfBuffer = await generatePDFFromHTML(html);
+
+                const pdfUploadResult = await new Promise((resolve, reject) => {
+                    cloudinary.uploader.upload_stream(
+                        {
+                            resource_type: "raw",
+                            folder: "credentials/generated",
+                            format: "pdf",
+                            public_id: `credential_${blockchainHash}`,
+                            overwrite: true
+                        },
+                        (error, result) => {
+                            if (error) return reject(error);
+                            resolve(result);
+                        }
+                    ).end(pdfBuffer);
+                });
+
+                exportLinks.pdf = pdfUploadResult.secure_url;
+                console.log('PDF version also generated');
+            } catch (pdfError) {
+                console.warn('PDF generation failed during creation:', pdfError.message);
+                // Continue without PDF - it's not critical
+            }
+
+        } catch (imageError) {
+            console.error('Failed to generate credential image during creation:', imageError);
+            // We'll continue without the image - it can be generated on-demand later
+        }
+
+        // Save credential with the generated image
         const credential = await Credential.create({
             participantId,
             eventId,
@@ -134,13 +206,22 @@ export const createCredentialWithDesign = async (req, res) => {
             qrCode,
             verificationUrl,
             participantData: participantData || {},
-            issuedBy: req.user.id
+            issuedBy: req.user.id,
+            // ** IMPORTANT: Store the generated image URL **
+            downloadLink: credentialImageUrl, // Main credential image
+            exportLinks: exportLinks, // All format links
+            status: 'issued',
+            issuedAt: new Date()
         });
 
         res.status(201).json({
             success: true,
             message: `${type} created successfully`,
-            credential
+            credential: {
+                ...credential.toJSON(),
+                credentialImageUrl, // Include in response
+                hasGeneratedImage: !!credentialImageUrl
+            }
         });
     } catch (error) {
         console.error("Create Credential Error:", error);
@@ -174,7 +255,22 @@ export const getMyCredentials = async (req, res) => {
             .populate("eventId", "title startDate location")
             .sort({ createdAt: -1 });
 
-        res.status(200).json(credentials);
+        // Transform credentials to include the correct download URLs
+        const transformedCredentials = credentials.map(credential => ({
+            ...credential.toJSON(),
+            // Prioritize the generated image over export links
+            mainImageUrl: credential.downloadLink || credential.exportLinks?.png,
+            // Provide all available download options
+            availableFormats: {
+                png: credential.exportLinks?.png || credential.downloadLink,
+                pdf: credential.exportLinks?.pdf,
+                jpeg: credential.exportLinks?.jpeg
+            },
+            // Indicate if image was pre-generated
+            hasGeneratedImage: !!(credential.downloadLink || credential.exportLinks?.png)
+        }));
+
+        res.status(200).json(transformedCredentials);
     } catch (error) {
         console.error("Get My Credentials Error:", error);
         res.status(500).json({
@@ -261,6 +357,125 @@ export const getAdminCredentials = async (req, res) => {
             success: false,
             message: 'Failed to fetch credentials',
             error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+    }
+};
+export const downloadCredentialDirect = async (req, res) => {
+    try {
+        const { participantId, credentialId } = req.params;
+
+        // Verify the credential belongs to the participant
+        const credential = await Credential.findOne({
+            _id: credentialId,
+            participantId: participantId,
+            status: { $ne: 'revoked' }
+        }).populate('eventId', 'title startDate');
+
+        if (!credential) {
+            return res.status(404).json({
+                success: false,
+                message: "Credential not found or access denied"
+            });
+        }
+
+        // Check if we have a pre-generated image
+        const imageUrl = credential.downloadLink || credential.exportLinks?.png;
+
+        if (imageUrl) {
+            // Update download count
+            credential.downloadCount += 1;
+            credential.lastDownloaded = new Date();
+            await credential.save();
+
+            // Return the direct URL for download
+            res.json({
+                success: true,
+                downloadUrl: imageUrl,
+                credential: {
+                    title: credential.title,
+                    type: credential.type,
+                    eventTitle: credential.eventId?.title,
+                    participantName: credential.participantData?.name,
+                    issuedDate: credential.issuedAt,
+                    blockchainHash: credential.blockchainHash,
+                    qrCode: credential.qrCode
+                }
+            });
+        } else {
+            // If no pre-generated image, try to generate on-demand
+            console.log('No pre-generated image found, generating on-demand...');
+
+            try {
+                const pngBuffer = await generatePNGWithCanvas(
+                    credential.designData,
+                    credential.participantData,
+                    credential._id
+                );
+
+                // Upload the generated image
+                const uploadResult = await new Promise((resolve, reject) => {
+                    cloudinary.uploader.upload_stream(
+                        {
+                            resource_type: "image",
+                            folder: "credentials/on-demand",
+                            format: "png",
+                            public_id: `credential_${credential._id}_${Date.now()}`,
+                        },
+                        (error, result) => {
+                            if (error) return reject(error);
+                            resolve(result);
+                        }
+                    ).end(pngBuffer);
+                });
+
+                // Update credential with the new URL
+                credential.exportLinks = credential.exportLinks || {};
+                credential.exportLinks.png = uploadResult.secure_url;
+                if (!credential.downloadLink) {
+                    credential.downloadLink = uploadResult.secure_url;
+                }
+                credential.downloadCount += 1;
+                credential.lastDownloaded = new Date();
+                await credential.save();
+
+                res.json({
+                    success: true,
+                    downloadUrl: uploadResult.secure_url,
+                    credential: {
+                        title: credential.title,
+                        type: credential.type,
+                        eventTitle: credential.eventId?.title,
+                        participantName: credential.participantData?.name,
+                        issuedDate: credential.issuedAt,
+                        blockchainHash: credential.blockchainHash,
+                        qrCode: credential.qrCode
+                    }
+                });
+
+            } catch (generationError) {
+                console.error('On-demand generation failed:', generationError);
+                res.status(500).json({
+                    success: false,
+                    message: "Direct download not available. Please use the export feature from the credential designer.",
+                    credential: {
+                        title: credential.title,
+                        type: credential.type,
+                        eventTitle: credential.eventId?.title,
+                        participantName: credential.participantData?.name,
+                        issuedDate: credential.issuedAt,
+                        blockchainHash: credential.blockchainHash,
+                        qrCode: credential.qrCode
+                    }
+                });
+            }
+        }
+
+    } catch (error) {
+        console.error("Direct Download Error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to download credential",
+            error: error.message
         });
     }
 };
@@ -719,139 +934,65 @@ export const exportCredentialPDF = async (req, res) => {
  */
 export const exportCredentialPNG = async (req, res) => {
     try {
-        console.log('Starting PNG export...');
-        const { designData, participantData, credentialId, method = 'canvas' } = req.body;
+        console.log('PNG export requested...');
+        const { designData, participantData, credentialId } = req.body;
 
-        if (!designData) {
-            return res.status(400).json({
-                success: false,
-                message: "Design data is required"
-            });
+        // If credentialId is provided, check for existing generated image
+        if (credentialId && mongoose.Types.ObjectId.isValid(credentialId)) {
+            const credential = await Credential.findById(credentialId);
+            
+            if (credential && (credential.downloadLink || credential.exportLinks?.png)) {
+                console.log('Using existing generated PNG image');
+                const existingUrl = credential.downloadLink || credential.exportLinks.png;
+                
+                return res.json({
+                    success: true,
+                    exportUrl: existingUrl,
+                    message: "PNG export successful (using existing image)",
+                    method: 'existing'
+                });
+            }
         }
 
-        if (!participantData) {
-            return res.status(400).json({
-                success: false,
-                message: "Participant data is required"
-            });
-        }
-
-        console.log('Export method:', method);
+        // If no existing image, generate new one (existing logic)
+        console.log('No existing image found, generating new PNG...');
+        
+        // ... rest of your existing PNG generation logic ...
+        const method = req.body.method || 'canvas';
         let pngBuffer;
 
-        try {
-            if (method === 'canvas') {
-                // Use Canvas for simple layouts - more reliable
-                console.log('Using Canvas method for PNG generation...');
-                pngBuffer = await generatePNGWithCanvas(designData, participantData, credentialId);
-            } else {
-                // Use Puppeteer for complex HTML layouts (fallback)
-                console.log('Using Puppeteer method for PNG generation...');
-                const html = generateCredentialHTML(designData, participantData);
-                pngBuffer = await generatePNGFromHTML(html);
-            }
-        } catch (generationError) {
-            console.error('PNG generation failed with method:', method, generationError);
-
-            // Try fallback method if the primary method fails
-            if (method === 'puppeteer') {
-                console.log('Puppeteer failed, trying Canvas fallback...');
-                try {
-                    pngBuffer = await generatePNGWithCanvas(designData, participantData, credentialId);
-                } catch (canvasError) {
-                    console.error('Canvas fallback also failed:', canvasError);
-                    throw new Error(`Both PNG generation methods failed. Puppeteer: ${generationError.message}, Canvas: ${canvasError.message}`);
-                }
-            } else {
-                console.log('Canvas failed, trying Puppeteer fallback...');
-                try {
-                    const html = generateCredentialHTML(designData, participantData);
-                    pngBuffer = await generatePNGFromHTML(html);
-                } catch (puppeteerError) {
-                    console.error('Puppeteer fallback also failed:', puppeteerError);
-                    throw new Error(`Both PNG generation methods failed. Canvas: ${generationError.message}, Puppeteer: ${puppeteerError.message}`);
-                }
-            }
+        if (method === 'canvas') {
+            pngBuffer = await generatePNGWithCanvas(designData, participantData, credentialId);
+        } else {
+            const html = generateCredentialHTML(designData, participantData);
+            pngBuffer = await generatePNGFromHTML(html);
         }
 
-        if (!pngBuffer || pngBuffer.length === 0) {
-            throw new Error('Generated PNG buffer is empty');
-        }
-
-        console.log('PNG generated successfully, size:', pngBuffer.length, 'bytes');
-
-        // Upload to Cloudinary with timeout handling and retry logic
-        let uploadResult;
-        const maxRetries = 2;
-        let retryCount = 0;
-
-        while (retryCount <= maxRetries) {
-            try {
-                uploadResult = await Promise.race([
-                    new Promise((resolve, reject) => {
-                        cloudinary.uploader.upload_stream(
-                            {
-                                resource_type: "image",
-                                folder: "credentials/exports",
-                                format: "png",
-                                timeout: 60000,
-                                public_id: `credential_${credentialId}_${Date.now()}`, // Unique identifier
-                                overwrite: true
-                            },
-                            (error, result) => {
-                                if (error) {
-                                    console.error('Cloudinary upload error:', error);
-                                    return reject(error);
-                                }
-                                resolve(result);
-                            }
-                        ).end(pngBuffer);
-                    }),
-                    new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('Cloudinary upload timeout')), 70000)
-                    )
-                ]);
-
-                console.log('Cloudinary upload successful:', uploadResult.secure_url);
-                break; // Success, exit retry loop
-
-            } catch (uploadError) {
-                retryCount++;
-                console.error(`Cloudinary upload attempt ${retryCount} failed:`, uploadError.message);
-
-                if (retryCount > maxRetries) {
-                    // If Cloudinary fails completely, try to return the buffer directly
-                    console.log('All Cloudinary upload attempts failed, returning buffer directly');
-
-                    res.set({
-                        'Content-Type': 'image/png',
-                        'Content-Disposition': `attachment; filename="${participantData.name || 'credential'}.png"`,
-                        'Content-Length': pngBuffer.length
-                    });
-
-                    return res.send(pngBuffer);
+        // Upload to Cloudinary
+        const uploadResult = await new Promise((resolve, reject) => {
+            cloudinary.uploader.upload_stream(
+                {
+                    resource_type: "image",
+                    folder: "credentials/exports",
+                    format: "png",
+                    public_id: `credential_${credentialId}_${Date.now()}`,
+                    overwrite: true
+                },
+                (error, result) => {
+                    if (error) return reject(error);
+                    resolve(result);
                 }
+            ).end(pngBuffer);
+        });
 
-                // Wait before retry
-                await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
-            }
-        }
-
-        // Update credential with export link if upload was successful
-        if (credentialId && mongoose.Types.ObjectId.isValid(credentialId) && uploadResult) {
-            try {
-                await Credential.findByIdAndUpdate(credentialId, {
-                    $set: {
-                        "exportLinks.png": uploadResult.secure_url,
-                        "lastExported": new Date(),
-                        "exportCount": { $inc: 1 }
-                    }
-                }, { upsert: false });
-                console.log('Credential updated with export link');
-            } catch (updateError) {
-                console.error('Failed to update credential:', updateError);
-                // Don't fail the entire request if credential update fails
-            }
+        // Update credential with export link
+        if (credentialId && mongoose.Types.ObjectId.isValid(credentialId)) {
+            await Credential.findByIdAndUpdate(credentialId, {
+                $set: { 
+                    "exportLinks.png": uploadResult.secure_url,
+                    "downloadLink": uploadResult.secure_url // Also set as main download link
+                }
+            });
         }
 
         res.json({
@@ -859,40 +1000,18 @@ export const exportCredentialPNG = async (req, res) => {
             exportUrl: uploadResult.secure_url,
             message: "PNG exported successfully",
             fileSize: pngBuffer.length,
-            method: method,
-            uploadProvider: 'cloudinary'
+            method: method
         });
 
     } catch (error) {
         console.error("PNG Export Error:", error);
-
-        // Provide more specific error messages
-        let errorMessage = "Failed to export PNG";
-        let statusCode = 500;
-
-        if (error.message.includes('Design data is required')) {
-            statusCode = 400;
-        } else if (error.message.includes('Participant data is required')) {
-            statusCode = 400;
-        } else if (error.message.includes('require is not defined')) {
-            errorMessage = "Server configuration error. PNG generation is temporarily unavailable.";
-        } else if (error.message.includes('Browser was not found')) {
-            errorMessage = "PDF/PNG generation service is temporarily unavailable. Please try again later.";
-        } else if (error.message.includes('timeout')) {
-            errorMessage = "PNG generation timed out. Please try again with a simpler design.";
-        } else if (error.message.includes('Both PNG generation methods failed')) {
-            errorMessage = "PNG generation is currently unavailable. Please try again later or contact support.";
-        }
-
-        res.status(statusCode).json({
+        res.status(500).json({
             success: false,
-            message: errorMessage,
-            error: error.message,
-            timestamp: new Date().toISOString()
+            message: "Failed to export PNG",
+            error: error.message
         });
     }
 };
-
 
 /**
  * Export Credential as JPEG (Enhanced)

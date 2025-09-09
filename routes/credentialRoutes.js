@@ -20,7 +20,8 @@ import {
     exportCredentialJPEG,
     exportCredentialPDF,
     createCredentialWithDesign,
-    getAdminCredentialsViaEvents
+    getAdminCredentialsViaEvents,
+    downloadCredentialDirect
 } from "../controllers/credentialController.js";
 
 const router = express.Router();
@@ -945,6 +946,11 @@ router.get("/templates/public", async (req, res) => {
  *         description: Server error
  */
 router.get("/", authenticate, getAdminCredentialsViaEvents);
+// In your routes file
+router.get('/participants/:participantId/credentials/:credentialId/download',
+    authenticate,
+    downloadCredentialDirect
+);
 
 export default router;
 

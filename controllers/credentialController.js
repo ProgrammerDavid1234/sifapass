@@ -720,7 +720,7 @@ export const exportCredentialPDF = async (req, res) => {
 export const exportCredentialPNG = async (req, res) => {
     try {
         console.log('Starting PNG export...');
-        const { designData, participantData, credentialId, method = 'puppeteer' } = req.body;
+        const { designData, participantData, credentialId, method = 'canvas' } = req.body;
 
         if (!designData) {
             return res.status(400).json({
@@ -736,51 +736,121 @@ export const exportCredentialPNG = async (req, res) => {
             });
         }
 
+        console.log('Export method:', method);
         let pngBuffer;
 
-        if (method === 'canvas') {
-            // Use Canvas for simple layouts
-            pngBuffer = await generatePNGWithCanvas(designData, participantData, credentialId);
-        } else {
-            // Use Puppeteer for complex HTML layouts (default)
-            const html = generateCredentialHTML(designData, participantData);
-            pngBuffer = await generatePNGFromHTML(html);
+        try {
+            if (method === 'canvas') {
+                // Use Canvas for simple layouts - more reliable
+                console.log('Using Canvas method for PNG generation...');
+                pngBuffer = await generatePNGWithCanvas(designData, participantData, credentialId);
+            } else {
+                // Use Puppeteer for complex HTML layouts (fallback)
+                console.log('Using Puppeteer method for PNG generation...');
+                const html = generateCredentialHTML(designData, participantData);
+                pngBuffer = await generatePNGFromHTML(html);
+            }
+        } catch (generationError) {
+            console.error('PNG generation failed with method:', method, generationError);
+
+            // Try fallback method if the primary method fails
+            if (method === 'puppeteer') {
+                console.log('Puppeteer failed, trying Canvas fallback...');
+                try {
+                    pngBuffer = await generatePNGWithCanvas(designData, participantData, credentialId);
+                } catch (canvasError) {
+                    console.error('Canvas fallback also failed:', canvasError);
+                    throw new Error(`Both PNG generation methods failed. Puppeteer: ${generationError.message}, Canvas: ${canvasError.message}`);
+                }
+            } else {
+                console.log('Canvas failed, trying Puppeteer fallback...');
+                try {
+                    const html = generateCredentialHTML(designData, participantData);
+                    pngBuffer = await generatePNGFromHTML(html);
+                } catch (puppeteerError) {
+                    console.error('Puppeteer fallback also failed:', puppeteerError);
+                    throw new Error(`Both PNG generation methods failed. Canvas: ${generationError.message}, Puppeteer: ${puppeteerError.message}`);
+                }
+            }
+        }
+
+        if (!pngBuffer || pngBuffer.length === 0) {
+            throw new Error('Generated PNG buffer is empty');
         }
 
         console.log('PNG generated successfully, size:', pngBuffer.length, 'bytes');
 
-        // Upload to Cloudinary with timeout handling
-        const uploadResult = await Promise.race([
-            new Promise((resolve, reject) => {
-                cloudinary.uploader.upload_stream(
-                    {
-                        resource_type: "image",
-                        folder: "credentials/exports",
-                        format: "png",
-                        timeout: 60000
-                    },
-                    (error, result) => {
-                        if (error) {
-                            console.error('Cloudinary upload error:', error);
-                            return reject(error);
-                        }
-                        resolve(result);
-                    }
-                ).end(pngBuffer);
-            }),
-            new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Cloudinary upload timeout')), 70000)
-            )
-        ]);
+        // Upload to Cloudinary with timeout handling and retry logic
+        let uploadResult;
+        const maxRetries = 2;
+        let retryCount = 0;
 
-        // Update credential with export link
-        if (credentialId && mongoose.Types.ObjectId.isValid(credentialId)) {
+        while (retryCount <= maxRetries) {
+            try {
+                uploadResult = await Promise.race([
+                    new Promise((resolve, reject) => {
+                        cloudinary.uploader.upload_stream(
+                            {
+                                resource_type: "image",
+                                folder: "credentials/exports",
+                                format: "png",
+                                timeout: 60000,
+                                public_id: `credential_${credentialId}_${Date.now()}`, // Unique identifier
+                                overwrite: true
+                            },
+                            (error, result) => {
+                                if (error) {
+                                    console.error('Cloudinary upload error:', error);
+                                    return reject(error);
+                                }
+                                resolve(result);
+                            }
+                        ).end(pngBuffer);
+                    }),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Cloudinary upload timeout')), 70000)
+                    )
+                ]);
+
+                console.log('Cloudinary upload successful:', uploadResult.secure_url);
+                break; // Success, exit retry loop
+
+            } catch (uploadError) {
+                retryCount++;
+                console.error(`Cloudinary upload attempt ${retryCount} failed:`, uploadError.message);
+
+                if (retryCount > maxRetries) {
+                    // If Cloudinary fails completely, try to return the buffer directly
+                    console.log('All Cloudinary upload attempts failed, returning buffer directly');
+
+                    res.set({
+                        'Content-Type': 'image/png',
+                        'Content-Disposition': `attachment; filename="${participantData.name || 'credential'}.png"`,
+                        'Content-Length': pngBuffer.length
+                    });
+
+                    return res.send(pngBuffer);
+                }
+
+                // Wait before retry
+                await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+            }
+        }
+
+        // Update credential with export link if upload was successful
+        if (credentialId && mongoose.Types.ObjectId.isValid(credentialId) && uploadResult) {
             try {
                 await Credential.findByIdAndUpdate(credentialId, {
-                    $set: { "exportLinks.png": uploadResult.secure_url }
-                });
+                    $set: {
+                        "exportLinks.png": uploadResult.secure_url,
+                        "lastExported": new Date(),
+                        "exportCount": { $inc: 1 }
+                    }
+                }, { upsert: false });
+                console.log('Credential updated with export link');
             } catch (updateError) {
                 console.error('Failed to update credential:', updateError);
+                // Don't fail the entire request if credential update fails
             }
         }
 
@@ -788,18 +858,41 @@ export const exportCredentialPNG = async (req, res) => {
             success: true,
             exportUrl: uploadResult.secure_url,
             message: "PNG exported successfully",
-            fileSize: pngBuffer.length
+            fileSize: pngBuffer.length,
+            method: method,
+            uploadProvider: 'cloudinary'
         });
 
     } catch (error) {
         console.error("PNG Export Error:", error);
-        res.status(500).json({
+
+        // Provide more specific error messages
+        let errorMessage = "Failed to export PNG";
+        let statusCode = 500;
+
+        if (error.message.includes('Design data is required')) {
+            statusCode = 400;
+        } else if (error.message.includes('Participant data is required')) {
+            statusCode = 400;
+        } else if (error.message.includes('require is not defined')) {
+            errorMessage = "Server configuration error. PNG generation is temporarily unavailable.";
+        } else if (error.message.includes('Browser was not found')) {
+            errorMessage = "PDF/PNG generation service is temporarily unavailable. Please try again later.";
+        } else if (error.message.includes('timeout')) {
+            errorMessage = "PNG generation timed out. Please try again with a simpler design.";
+        } else if (error.message.includes('Both PNG generation methods failed')) {
+            errorMessage = "PNG generation is currently unavailable. Please try again later or contact support.";
+        }
+
+        res.status(statusCode).json({
             success: false,
-            message: "Failed to export PNG",
-            error: error.message
+            message: errorMessage,
+            error: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 };
+
 
 /**
  * Export Credential as JPEG (Enhanced)
@@ -1255,65 +1348,192 @@ async function generatePDFWithPDFKit(designData, participantData, credentialId) 
 /**
  * Generate PNG using Canvas (Alternative method for simple layouts)
  */
-async function generatePNGWithCanvas(designData, participantData, credentialId) {
-    const canvas = createCanvas(1200, 800);
-    const ctx = canvas.getContext('2d');
+const generatePNGWithCanvas = async (designData, participantData, credentialId) => {
+    try {
+        const { createCanvas, loadImage, registerFont } = require('canvas');
 
-    // Add background
-    if (designData?.background?.type === 'gradient') {
-        const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-        gradient.addColorStop(0, designData.background.primaryColor || '#3498db');
-        gradient.addColorStop(1, designData.background.secondaryColor || '#e74c3c');
-        ctx.fillStyle = gradient;
-    } else {
-        ctx.fillStyle = designData?.background?.primaryColor || '#ffffff';
-    }
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const width = designData.canvas?.width || 1200;
+        const height = designData.canvas?.height || 800;
+        const canvas = createCanvas(width, height);
+        const ctx = canvas.getContext('2d');
 
-    // Add border
-    ctx.strokeStyle = '#cccccc';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
+        // Set high quality rendering
+        ctx.antialias = 'subpixel';
+        ctx.quality = 'best';
 
-    // Add title
-    ctx.fillStyle = '#000000';
-    ctx.font = 'bold 48px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(designData?.content?.titleText || 'Certificate of Achievement', canvas.width / 2, 150);
+        // Clear canvas with white background first
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
 
-    // Add participant name
-    ctx.font = '24px Arial';
-    ctx.fillText('This is to certify that', canvas.width / 2, 250);
+        // Apply background
+        if (designData.background) {
+            if (designData.background.type === 'solid') {
+                ctx.fillStyle = designData.background.primaryColor || '#ffffff';
+                ctx.fillRect(0, 0, width, height);
+            } else if (designData.background.type === 'gradient') {
+                const direction = designData.background.gradientDirection || 'to right';
+                let gradient;
 
-    ctx.font = 'bold 36px Arial';
-    ctx.fillStyle = '#2c3e50';
-    ctx.fillText(participantData.name, canvas.width / 2, 320);
+                // Parse gradient direction
+                if (direction.includes('right')) {
+                    gradient = ctx.createLinearGradient(0, 0, width, 0);
+                } else if (direction.includes('left')) {
+                    gradient = ctx.createLinearGradient(width, 0, 0, 0);
+                } else if (direction.includes('top')) {
+                    gradient = ctx.createLinearGradient(0, height, 0, 0);
+                } else if (direction.includes('bottom')) {
+                    gradient = ctx.createLinearGradient(0, 0, 0, height);
+                } else {
+                    gradient = ctx.createLinearGradient(0, 0, width, 0); // default to right
+                }
 
-    // Add event description
-    ctx.font = '20px Arial';
-    ctx.fillStyle = '#000000';
-    ctx.fillText(designData?.content?.eventDescription || `has successfully completed ${participantData.eventTitle || 'the event'}`, canvas.width / 2, 400);
-
-    // Add date
-    const date = new Date().toLocaleDateString();
-    ctx.font = '16px Arial';
-    ctx.fillText(`Issued on ${date}`, canvas.width / 2, 450);
-
-    // Add QR code if available
-    if (designData?.verification?.includeQRCode !== false && credentialId) {
-        try {
-            const qrCodeData = `Credential ID: ${credentialId}\nParticipant: ${participantData.name}`;
-            const qrCodeBuffer = await QRCode.toBuffer(qrCodeData, { width: 100 });
-            // Note: Loading image in Canvas requires additional handling
-            // This is a simplified version
-        } catch (qrError) {
-            console.error('QR code generation failed:', qrError);
+                gradient.addColorStop(0, designData.background.primaryColor || '#3498db');
+                gradient.addColorStop(1, designData.background.secondaryColor || '#e74c3c');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(0, 0, width, height);
+            } else if (designData.background.type === 'image' && designData.background.backgroundImage) {
+                try {
+                    const bgImage = await loadImage(designData.background.backgroundImage);
+                    ctx.drawImage(bgImage, 0, 0, width, height);
+                } catch (imageError) {
+                    console.warn('Failed to load background image:', imageError.message);
+                    // Fallback to solid color
+                    ctx.fillStyle = designData.background.primaryColor || '#ffffff';
+                    ctx.fillRect(0, 0, width, height);
+                }
+            }
         }
+
+        // Apply text content
+        const content = designData.content || {};
+        const textColor = content.textColor || '#000000';
+        const fontFamily = content.fontFamily?.split(',')[0]?.trim() || 'Arial';
+        const baseFontSize = content.fontSize || 24;
+
+        ctx.fillStyle = textColor;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // Title
+        if (content.titleText) {
+            ctx.font = `bold ${baseFontSize * 1.5}px ${fontFamily}`;
+            ctx.fillText(content.titleText, width / 2, height * 0.25);
+        }
+
+        // Participant name (larger, prominent)
+        if (participantData.name) {
+            ctx.font = `bold ${baseFontSize * 1.2}px ${fontFamily}`;
+            ctx.fillText(participantData.name, width / 2, height * 0.45);
+        }
+
+        // Event description
+        if (content.eventDescription) {
+            ctx.font = `${baseFontSize * 0.8}px ${fontFamily}`;
+            // Word wrap for long descriptions
+            const words = content.eventDescription.split(' ');
+            let line = '';
+            const lineHeight = baseFontSize;
+            let y = height * 0.65;
+
+            for (let i = 0; i < words.length; i++) {
+                const testLine = line + words[i] + ' ';
+                const testWidth = ctx.measureText(testLine).width;
+
+                if (testWidth > width * 0.8 && i > 0) {
+                    ctx.fillText(line, width / 2, y);
+                    line = words[i] + ' ';
+                    y += lineHeight;
+                } else {
+                    line = testLine;
+                }
+            }
+            ctx.fillText(line, width / 2, y);
+        }
+
+        // Date
+        if (participantData.eventDate) {
+            ctx.font = `${baseFontSize * 0.7}px ${fontFamily}`;
+            const date = new Date(participantData.eventDate).toLocaleDateString();
+            ctx.fillText(`Date: ${date}`, width / 2, height * 0.85);
+        }
+
+        // Add credential hash if available
+        if (credentialId) {
+            ctx.font = `${baseFontSize * 0.5}px monospace`;
+            ctx.fillStyle = '#666666';
+            ctx.fillText(`ID: ${credentialId.substring(0, 16)}...`, width / 2, height * 0.95);
+        }
+
+        // Render any custom elements
+        if (designData.elements && Array.isArray(designData.elements)) {
+            for (const element of designData.elements) {
+                try {
+                    await renderElement(ctx, element, width, height);
+                } catch (elementError) {
+                    console.warn('Failed to render element:', element.type, elementError.message);
+                }
+            }
+        }
+
+        return canvas.toBuffer('image/png');
+
+    } catch (error) {
+        console.error('Canvas PNG generation error:', error);
+        throw new Error(`Canvas PNG generation failed: ${error.message}`);
     }
+};
+const renderElement = async (ctx, element, canvasWidth, canvasHeight) => {
+    const x = element.x || 0;
+    const y = element.y || 0;
+    const width = element.width || 100;
+    const height = element.height || 50;
 
-    return canvas.toBuffer('image/png');
-}
+    switch (element.type) {
+        case 'text':
+            ctx.fillStyle = element.color || '#000000';
+            ctx.font = `${element.fontSize || 16}px ${element.fontFamily || 'Arial'}`;
+            ctx.textAlign = element.textAlign || 'left';
+            ctx.fillText(element.content || '', x, y);
+            break;
 
+        case 'image':
+            if (element.src) {
+                try {
+                    const { loadImage } = require('canvas');
+                    const image = await loadImage(element.src);
+                    ctx.drawImage(image, x, y, width, height);
+                } catch (imageError) {
+                    console.warn('Failed to load element image:', imageError.message);
+                }
+            }
+            break;
+
+        case 'shape':
+            ctx.fillStyle = element.color || '#000000';
+            if (element.shape === 'rectangle') {
+                ctx.fillRect(x, y, width, height);
+            } else if (element.shape === 'circle') {
+                ctx.beginPath();
+                ctx.arc(x + width / 2, y + height / 2, Math.min(width, height) / 2, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+            break;
+
+        case 'qr-code':
+            // QR code rendering would require a QR code library
+            // For now, just draw a placeholder
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(x, y, width, height);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('QR', x + width / 2, y + height / 2);
+            break;
+
+        default:
+            console.warn('Unknown element type:', element.type);
+    }
+};
 /**
  * Generate JPEG using Canvas (Alternative method for simple layouts)
  */

@@ -10,6 +10,11 @@ import fs from 'fs';
 import path from 'path';
 import { createCanvas } from 'canvas';
 import mongoose from 'mongoose';
+import {
+    trackCredentialIssued,
+    trackCredentialVerified,
+    trackCredentialDownloaded
+} from "../utils/analyticsHelper.js";
 
 /**
  * Configure Cloudinary
@@ -40,6 +45,14 @@ export const createCredential = async (req, res) => {
 
         if (!req.file) {
             return res.status(400).json({ message: "File upload is required" });
+        }
+
+        // Get participant and event details for analytics
+        const participant = await Participant.findById(participantId);
+        const event = await Event.findById(eventId);
+
+        if (!participant || !event) {
+            return res.status(400).json({ message: "Invalid participant or event ID" });
         }
 
         // Upload to Cloudinary using buffer
@@ -76,17 +89,44 @@ export const createCredential = async (req, res) => {
             downloadLink,
             blockchainHash,
             qrCode,
-            issuedBy: req.user.id
+            issuedBy: req.user.id,
+            issuedAt: new Date()
         });
+
+        // Track the credential issuance
+        await trackCredentialIssued({
+            id: credential._id,
+            type: credential.type,
+            eventId: credential.eventId,
+            eventName: event.title,
+            recipientEmail: participant.email,
+            credentialType: type
+        }, req.user.email || req.user.id);
 
         res
             .status(201)
-            .json({ message: `${type} created successfully`, credential });
+            .json({
+                success: true,
+                message: `${type} created successfully`,
+                credential: {
+                    id: credential._id,
+                    title: credential.title,
+                    type: credential.type,
+                    downloadLink: credential.downloadLink,
+                    blockchainHash: credential.blockchainHash,
+                    qrCode: credential.qrCode,
+                    issuedAt: credential.issuedAt
+                }
+            });
     } catch (error) {
         console.error("CreateCredential Error:", error);
         res
             .status(500)
-            .json({ message: "Failed to create credential", error: error.message });
+            .json({
+                success: false,
+                message: "Failed to create credential",
+                error: error.message
+            });
     }
 };
 
@@ -369,7 +409,8 @@ export const downloadCredentialDirect = async (req, res) => {
             _id: credentialId,
             participantId: participantId,
             status: { $ne: 'revoked' }
-        }).populate('eventId', 'title startDate');
+        }).populate('eventId', 'title startDate')
+            .populate('participantId', 'name email');
 
         if (!credential) {
             return res.status(404).json({
@@ -387,6 +428,13 @@ export const downloadCredentialDirect = async (req, res) => {
             credential.lastDownloaded = new Date();
             await credential.save();
 
+            // Track the download
+            await trackCredentialDownloaded(
+                credential._id,
+                'png', // format
+                credential.participantId?.email || 'anonymous'
+            );
+
             // Return the direct URL for download
             res.json({
                 success: true,
@@ -395,7 +443,7 @@ export const downloadCredentialDirect = async (req, res) => {
                     title: credential.title,
                     type: credential.type,
                     eventTitle: credential.eventId?.title,
-                    participantName: credential.participantData?.name,
+                    participantName: credential.participantData?.name || credential.participantId?.name,
                     issuedDate: credential.issuedAt,
                     blockchainHash: credential.blockchainHash,
                     qrCode: credential.qrCode
@@ -438,6 +486,13 @@ export const downloadCredentialDirect = async (req, res) => {
                 credential.lastDownloaded = new Date();
                 await credential.save();
 
+                // Track the download
+                await trackCredentialDownloaded(
+                    credential._id,
+                    'png',
+                    credential.participantId?.email || 'anonymous'
+                );
+
                 res.json({
                     success: true,
                     downloadUrl: uploadResult.secure_url,
@@ -445,7 +500,7 @@ export const downloadCredentialDirect = async (req, res) => {
                         title: credential.title,
                         type: credential.type,
                         eventTitle: credential.eventId?.title,
-                        participantName: credential.participantData?.name,
+                        participantName: credential.participantData?.name || credential.participantId?.name,
                         issuedDate: credential.issuedAt,
                         blockchainHash: credential.blockchainHash,
                         qrCode: credential.qrCode
@@ -461,7 +516,7 @@ export const downloadCredentialDirect = async (req, res) => {
                         title: credential.title,
                         type: credential.type,
                         eventTitle: credential.eventId?.title,
-                        participantName: credential.participantData?.name,
+                        participantName: credential.participantData?.name || credential.participantId?.name,
                         issuedDate: credential.issuedAt,
                         blockchainHash: credential.blockchainHash,
                         qrCode: credential.qrCode
@@ -577,17 +632,47 @@ export const verifyCredential = async (req, res) => {
     try {
         const { hash } = req.query;
 
-        const credential = await Credential.findOne({ blockchainHash: hash });
+        const credential = await Credential.findOne({ blockchainHash: hash })
+            .populate('eventId', 'title')
+            .populate('participantId', 'name email');
+
         if (!credential) {
-            return res.status(404).json({ success: false, message: "Invalid or tampered credential" });
+            return res.status(404).json({
+                success: false,
+                message: "Invalid or tampered credential"
+            });
         }
 
-        res.json({ success: true, message: "Credential verified successfully", credential });
+        // Track the verification
+        await trackCredentialVerified(
+            credential._id,
+            'blockchain_hash', // verification method
+            req.ip || 'anonymous' // Use IP as identifier for anonymous verification
+        );
+
+        res.json({
+            success: true,
+            message: "Credential verified successfully",
+            credential: {
+                id: credential._id,
+                title: credential.title,
+                type: credential.type,
+                participantName: credential.participantId?.name,
+                eventTitle: credential.eventId?.title,
+                issuedAt: credential.issuedAt,
+                blockchainHash: credential.blockchainHash,
+                qrCode: credential.qrCode
+            }
+        });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error("Verify Credential Error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to verify credential",
+            error: error.message
+        });
     }
 };
-
 /**
  * Customize Credential
  */
@@ -940,11 +1025,11 @@ export const exportCredentialPNG = async (req, res) => {
         // If credentialId is provided, check for existing generated image
         if (credentialId && mongoose.Types.ObjectId.isValid(credentialId)) {
             const credential = await Credential.findById(credentialId);
-            
+
             if (credential && (credential.downloadLink || credential.exportLinks?.png)) {
                 console.log('Using existing generated PNG image');
                 const existingUrl = credential.downloadLink || credential.exportLinks.png;
-                
+
                 return res.json({
                     success: true,
                     exportUrl: existingUrl,
@@ -956,7 +1041,7 @@ export const exportCredentialPNG = async (req, res) => {
 
         // If no existing image, generate new one (existing logic)
         console.log('No existing image found, generating new PNG...');
-        
+
         // ... rest of your existing PNG generation logic ...
         const method = req.body.method || 'canvas';
         let pngBuffer;
@@ -988,7 +1073,7 @@ export const exportCredentialPNG = async (req, res) => {
         // Update credential with export link
         if (credentialId && mongoose.Types.ObjectId.isValid(credentialId)) {
             await Credential.findByIdAndUpdate(credentialId, {
-                $set: { 
+                $set: {
                     "exportLinks.png": uploadResult.secure_url,
                     "downloadLink": uploadResult.secure_url // Also set as main download link
                 }
@@ -1891,6 +1976,54 @@ export const getAdminCredentialsViaEvents = async (req, res) => {
             success: false,
             message: 'Failed to fetch credentials',
             error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+    }
+};
+export const viewCredential = async (req, res) => {
+    try {
+        const { participantId, credentialId } = req.params;
+
+        const credential = await Credential.findOne({
+            _id: credentialId,
+            participantId: participantId,
+            status: { $ne: 'revoked' }
+        }).populate('eventId', 'title')
+            .populate('participantId', 'name email');
+
+        if (!credential) {
+            return res.status(404).json({
+                success: false,
+                message: "Credential not found"
+            });
+        }
+
+        // Track credential view (different from verification)
+        await trackCredentialVerified(
+            credential._id,
+            'credential_view',
+            credential.participantId?.email || 'anonymous'
+        );
+
+        res.json({
+            success: true,
+            credential: {
+                title: credential.title,
+                type: credential.type,
+                eventTitle: credential.eventId?.title,
+                participantName: credential.participantId?.name,
+                issuedDate: credential.issuedAt,
+                blockchainHash: credential.blockchainHash,
+                qrCode: credential.qrCode,
+                downloadLink: credential.downloadLink
+            }
+        });
+
+    } catch (error) {
+        console.error("View Credential Error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to view credential",
+            error: error.message
         });
     }
 };

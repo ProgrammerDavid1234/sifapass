@@ -14,6 +14,7 @@ import swaggerJsdoc from "swagger-jsdoc";
 dotenv.config();
 
 // Import your existing routes
+import analyticsRoutes from "./routes/analyticsRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import participantRoutes from "./routes/participant.js";
 import eventRoutes from "./routes/eventRoutes.js";
@@ -233,6 +234,10 @@ const swaggerOptions = {
                 description: "Participant management operations"
             },
             {
+                name: "Analytics",
+                description: "Analytics and reporting operations"
+            },
+            {
                 name: "Events",
                 description: "Event management operations"
             },
@@ -329,7 +334,7 @@ app.use("/api/credentials", credentialRoutes);
 
 app.use("/api/certificates", certificateRoutes);
 app.use("/api/organization", organizationRoutes);
-
+app.use("/api/analytics", analyticsRoutes);
 // Admin routes (legacy support)
 app.use("/admin/plans", planRoutes);
 app.use("/admin/invoices", invoiceRoutes);

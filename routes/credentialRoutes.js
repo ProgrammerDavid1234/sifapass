@@ -29,7 +29,11 @@ import { authenticate } from "../middleware/auth.js";
 import multer from "multer";
 import path from "path";
 import upload from "../middleware/upload.js";
-
+import {
+    trackCredentialIssued,
+    trackCredentialVerified,
+    trackCredentialDownloaded
+} from "../utils/analyticsHelper.js";
 
 
 

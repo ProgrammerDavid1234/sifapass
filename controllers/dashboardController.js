@@ -234,7 +234,6 @@ export const getRecentActivity = async (req, res) => {
     if (cached) {
       return res.json({ ...cached, cached: true });
     }
-
     let matchQuery = {};
     if (since) matchQuery.createdAt = { $gte: new Date(since) };
     if (types) matchQuery.type = { $in: types.split(",") };

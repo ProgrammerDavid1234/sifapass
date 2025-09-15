@@ -102,7 +102,17 @@ export const createCredential = async (req, res) => {
             recipientEmail: participant.email,
             credentialType: type
         }, req.user.email || req.user.id);
-
+        // In your credential creation endpoint
+        await ActivityLog.create({
+            action: 'credential_issued',
+            actor: participantId,
+            timestamp: new Date(),
+            details: {
+                credentialId: credential._id,
+                eventId: credential.eventId,
+                eventName: credential.participantData.eventTitle
+            }
+        });
         res
             .status(201)
             .json({

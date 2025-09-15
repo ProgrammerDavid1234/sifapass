@@ -1,9 +1,8 @@
 import mongoose from "mongoose";
-import ActivityLog from "../models/ActivityLog.js";
-// Import your existing models
-// import Event from "../models/Event.js";
-// import Credential from "../models/Credential.js";
-// import Participant from "../models/Participant.js";
+import Credential from "../models/Credentials.js"; // Import the actual Credential model
+// Import other models as needed
+import Event from "../models/Event.js";
+import Participant from "../models/Participant.js";
 
 // Get dashboard analytics summary
 export const getDashboardAnalytics = async (req, res) => {
@@ -12,18 +11,19 @@ export const getDashboardAnalytics = async (req, res) => {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - parseInt(period));
 
-    // Total credentials issued (replace with your actual credential model)
-    const totalCredentials = await ActivityLog.countDocuments({
-      action: "credential_issued",
-      timestamp: { $gte: startDate }
+    // Total credentials issued in the period
+    const totalCredentials = await Credential.countDocuments({
+      issuedAt: { $gte: startDate },
+      status: { $ne: 'draft' } // Exclude drafts
     });
 
+    // Previous period comparison
     const previousPeriodStart = new Date(startDate);
     previousPeriodStart.setDate(previousPeriodStart.getDate() - parseInt(period));
     
-    const previousCredentials = await ActivityLog.countDocuments({
-      action: "credential_issued",
-      timestamp: { $gte: previousPeriodStart, $lt: startDate }
+    const previousCredentials = await Credential.countDocuments({
+      issuedAt: { $gte: previousPeriodStart, $lt: startDate },
+      status: { $ne: 'draft' }
     });
 
     // Calculate percentage change
@@ -31,20 +31,39 @@ export const getDashboardAnalytics = async (req, res) => {
       ? ((totalCredentials - previousCredentials) / previousCredentials * 100).toFixed(1)
       : totalCredentials > 0 ? 100 : 0;
 
-    // Engagement rate calculation
-    const verificationViews = await ActivityLog.countDocuments({
-      action: "credential_verified",
-      timestamp: { $gte: startDate }
+    // Total verification views (using viewCount from credentials)
+    const verificationViews = await Credential.aggregate([
+      {
+        $match: {
+          issuedAt: { $gte: startDate },
+          status: { $ne: 'draft' }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalViews: { $sum: "$viewCount" }
+        }
+      }
+    ]);
+
+    const totalViews = verificationViews.length > 0 ? verificationViews[0].totalViews : 0;
+
+    // Engagement rate calculation (credentials with views vs total)
+    const credentialsWithViews = await Credential.countDocuments({
+      issuedAt: { $gte: startDate },
+      status: { $ne: 'draft' },
+      viewCount: { $gt: 0 }
     });
 
     const engagementRate = totalCredentials > 0 
-      ? ((verificationViews / totalCredentials) * 100).toFixed(1)
+      ? ((credentialsWithViews / totalCredentials) * 100).toFixed(1)
       : 0;
 
-    // Active recipients (unique actors who received credentials)
-    const activeRecipients = await ActivityLog.distinct("actor", {
-      action: "credential_received",
-      timestamp: { $gte: startDate }
+    // Active recipients (unique participants who received credentials)
+    const activeRecipients = await Credential.distinct("participantId", {
+      issuedAt: { $gte: startDate },
+      status: { $ne: 'draft' }
     });
 
     res.json({
@@ -54,12 +73,13 @@ export const getDashboardAnalytics = async (req, res) => {
         credentialGrowth: `${credentialGrowth >= 0 ? '+' : ''}${credentialGrowth}`,
         engagementRate: `${engagementRate}%`,
         activeRecipients: activeRecipients.length,
-        verificationViews,
+        verificationViews: totalViews,
         period: parseInt(period)
       }
     });
 
   } catch (error) {
+    console.error('Dashboard Analytics Error:', error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch dashboard analytics",
@@ -73,37 +93,69 @@ export const getTopPerformingEvents = async (req, res) => {
   try {
     const { limit = 10 } = req.query;
 
-    const topEvents = await ActivityLog.aggregate([
+    const topEvents = await Credential.aggregate([
       {
         $match: {
-          action: { $in: ["credential_issued", "credential_verified"] },
-          "details.eventId": { $exists: true }
+          status: { $ne: 'draft' }
+        }
+      },
+      {
+        $lookup: {
+          from: "events", // Assuming your events collection name is "events"
+          localField: "eventId",
+          foreignField: "_id",
+          as: "eventDetails"
+        }
+      },
+      {
+        $unwind: {
+          path: "$eventDetails",
+          preserveNullAndEmptyArrays: true
         }
       },
       {
         $group: {
-          _id: "$details.eventId",
-          eventName: { $first: "$details.eventName" },
-          credentialsIssued: {
-            $sum: { $cond: [{ $eq: ["$action", "credential_issued"] }, 1, 0] }
+          _id: "$eventId",
+          eventName: { 
+            $first: { 
+              $ifNull: ["$eventDetails.title", "$participantData.eventTitle", "Unknown Event"] 
+            }
           },
-          verifications: {
-            $sum: { $cond: [{ $eq: ["$action", "credential_verified"] }, 1, 0] }
-          }
+          credentialsIssued: { $sum: 1 },
+          totalViews: { $sum: "$viewCount" },
+          totalDownloads: { $sum: "$downloadCount" },
+          participantCount: { $addToSet: "$participantId" }
         }
       },
       {
         $addFields: {
+          uniqueParticipants: { $size: "$participantCount" },
           engagementScore: {
             $cond: [
               { $eq: ["$credentialsIssued", 0] },
               0,
-              { $multiply: [{ $divide: ["$verifications", "$credentialsIssued"] }, 100] }
+              {
+                $add: [
+                  { $multiply: [{ $divide: ["$totalViews", "$credentialsIssued"] }, 50] },
+                  { $multiply: [{ $divide: ["$totalDownloads", "$credentialsIssued"] }, 30] },
+                  { $multiply: ["$uniqueParticipants", 20] }
+                ]
+              }
             ]
           }
         }
       },
-      { $sort: { engagementScore: -1 } },
+      {
+        $project: {
+          eventName: 1,
+          credentialsIssued: 1,
+          totalViews: 1,
+          totalDownloads: 1,
+          uniqueParticipants: 1,
+          engagementScore: { $round: ["$engagementScore", 2] }
+        }
+      },
+      { $sort: { engagementScore: -1, credentialsIssued: -1 } },
       { $limit: parseInt(limit) }
     ]);
 
@@ -113,6 +165,7 @@ export const getTopPerformingEvents = async (req, res) => {
     });
 
   } catch (error) {
+    console.error('Top Events Error:', error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch top performing events",
@@ -126,19 +179,38 @@ export const getRecentActivity = async (req, res) => {
   try {
     const { limit = 20 } = req.query;
 
-    const recentActivity = await ActivityLog.find({
-      action: { $in: ["credential_issued", "credential_verified", "credential_downloaded"] }
+    const recentActivity = await Credential.find({
+      status: { $ne: 'draft' }
     })
-    .sort({ timestamp: -1 })
+    .populate('participantId', 'name email')
+    .populate('eventId', 'title')
+    .populate('issuedBy', 'name')
+    .sort({ issuedAt: -1 })
     .limit(parseInt(limit))
-    .select('action actor timestamp details');
+    .select('title type issuedAt participantId eventId issuedBy status viewCount downloadCount');
+
+    // Format the activity data
+    const formattedActivity = recentActivity.map(credential => ({
+      action: `Credential ${credential.status}`,
+      actor: credential.participantId?.name || 'Unknown Participant',
+      timestamp: credential.issuedAt,
+      details: {
+        credentialTitle: credential.title,
+        credentialType: credential.type,
+        eventTitle: credential.eventId?.title || credential.participantData?.eventTitle,
+        issuedBy: credential.issuedBy?.name || 'System',
+        views: credential.viewCount,
+        downloads: credential.downloadCount
+      }
+    }));
 
     res.json({
       success: true,
-      data: recentActivity
+      data: formattedActivity
     });
 
   } catch (error) {
+    console.error('Recent Activity Error:', error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch recent activity",
@@ -154,19 +226,19 @@ export const getCredentialIssuanceTrend = async (req, res) => {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - parseInt(period));
 
-    const trendData = await ActivityLog.aggregate([
+    const trendData = await Credential.aggregate([
       {
         $match: {
-          action: "credential_issued",
-          timestamp: { $gte: startDate }
+          issuedAt: { $gte: startDate },
+          status: { $ne: 'draft' }
         }
       },
       {
         $group: {
           _id: {
-            year: { $year: "$timestamp" },
-            month: { $month: "$timestamp" },
-            day: { $dayOfMonth: "$timestamp" }
+            year: { $year: "$issuedAt" },
+            month: { $month: "$issuedAt" },
+            day: { $dayOfMonth: "$issuedAt" }
           },
           count: { $sum: 1 }
         }
@@ -195,6 +267,7 @@ export const getCredentialIssuanceTrend = async (req, res) => {
     });
 
   } catch (error) {
+    console.error('Issuance Trend Error:', error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch credential issuance trend",
@@ -210,17 +283,18 @@ export const getVerificationAnalytics = async (req, res) => {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - parseInt(period));
 
-    const verificationData = await ActivityLog.aggregate([
+    // Hourly pattern based on when credentials were last viewed
+    const hourlyPattern = await Credential.aggregate([
       {
         $match: {
-          action: "credential_verified",
-          timestamp: { $gte: startDate }
+          lastViewed: { $gte: startDate },
+          status: { $ne: 'draft' }
         }
       },
       {
         $group: {
           _id: {
-            hour: { $hour: "$timestamp" }
+            hour: { $hour: "$lastViewed" }
           },
           count: { $sum: 1 }
         }
@@ -237,17 +311,25 @@ export const getVerificationAnalytics = async (req, res) => {
       }
     ]);
 
-    // Get verification methods breakdown
-    const verificationMethods = await ActivityLog.aggregate([
+    // Verification attempts analysis
+    const verificationMethods = await Credential.aggregate([
       {
         $match: {
-          action: "credential_verified",
-          timestamp: { $gte: startDate }
+          "verificationAttempts.0": { $exists: true },
+          issuedAt: { $gte: startDate }
+        }
+      },
+      {
+        $unwind: "$verificationAttempts"
+      },
+      {
+        $match: {
+          "verificationAttempts.timestamp": { $gte: startDate }
         }
       },
       {
         $group: {
-          _id: "$details.verificationMethod",
+          _id: "$verificationAttempts.result",
           count: { $sum: 1 }
         }
       }
@@ -256,12 +338,13 @@ export const getVerificationAnalytics = async (req, res) => {
     res.json({
       success: true,
       data: {
-        hourlyPattern: verificationData,
+        hourlyPattern,
         methods: verificationMethods
       }
     });
 
   } catch (error) {
+    console.error('Verification Analytics Error:', error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch verification analytics",
@@ -278,53 +361,50 @@ export const getDetailedMetrics = async (req, res) => {
     startDate.setDate(startDate.getDate() - parseInt(period));
 
     // Credential types breakdown
-    const credentialTypes = await ActivityLog.aggregate([
+    const credentialTypes = await Credential.aggregate([
       {
         $match: {
-          action: "credential_issued",
-          timestamp: { $gte: startDate }
+          issuedAt: { $gte: startDate },
+          status: { $ne: 'draft' }
         }
       },
       {
         $group: {
-          _id: "$details.credentialType",
+          _id: "$type",
           count: { $sum: 1 }
         }
       }
     ]);
 
-    // Delivery methods
-    const deliveryMethods = await ActivityLog.aggregate([
+    // Status breakdown
+    const statusBreakdown = await Credential.aggregate([
       {
         $match: {
-          action: "credential_delivered",
-          timestamp: { $gte: startDate }
+          issuedAt: { $gte: startDate }
         }
       },
       {
         $group: {
-          _id: "$details.deliveryMethod",
+          _id: "$status",
           count: { $sum: 1 }
         }
       }
     ]);
 
     // Verification status
-    const verificationStatus = await ActivityLog.aggregate([
+    const verificationStatus = await Credential.aggregate([
       {
         $match: {
-          action: { $in: ["credential_issued", "credential_verified"] },
-          timestamp: { $gte: startDate }
+          issuedAt: { $gte: startDate },
+          status: { $ne: 'draft' }
         }
       },
       {
         $group: {
           _id: null,
-          issued: {
-            $sum: { $cond: [{ $eq: ["$action", "credential_issued"] }, 1, 0] }
-          },
+          total: { $sum: 1 },
           verified: {
-            $sum: { $cond: [{ $eq: ["$action", "credential_verified"] }, 1, 0] }
+            $sum: { $cond: [{ $gt: ["$viewCount", 0] }, 1, 0] }
           }
         }
       },
@@ -332,7 +412,7 @@ export const getDetailedMetrics = async (req, res) => {
         $project: {
           _id: 0,
           verified: "$verified",
-          unverified: { $subtract: ["$issued", "$verified"] }
+          unverified: { $subtract: ["$total", "$verified"] }
         }
       }
     ]);
@@ -341,12 +421,13 @@ export const getDetailedMetrics = async (req, res) => {
       success: true,
       data: {
         credentialTypes,
-        deliveryMethods,
+        statusBreakdown,
         verificationStatus: verificationStatus[0] || { verified: 0, unverified: 0 }
       }
     });
 
   } catch (error) {
+    console.error('Detailed Metrics Error:', error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch detailed metrics",
@@ -386,6 +467,7 @@ export const exportAnalyticsReport = async (req, res) => {
     }
 
   } catch (error) {
+    console.error('Export Report Error:', error);
     res.status(500).json({
       success: false,
       message: "Failed to export analytics report",
@@ -396,37 +478,49 @@ export const exportAnalyticsReport = async (req, res) => {
 
 // Helper functions
 async function getDashboardAnalyticsSummary(startDate) {
-  const totalCredentials = await ActivityLog.countDocuments({
-    action: "credential_issued",
-    timestamp: { $gte: startDate }
+  const totalCredentials = await Credential.countDocuments({
+    issuedAt: { $gte: startDate },
+    status: { $ne: 'draft' }
   });
 
-  const verificationViews = await ActivityLog.countDocuments({
-    action: "credential_verified",
-    timestamp: { $gte: startDate }
-  });
+  const verificationViews = await Credential.aggregate([
+    {
+      $match: {
+        issuedAt: { $gte: startDate },
+        status: { $ne: 'draft' }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        totalViews: { $sum: "$viewCount" }
+      }
+    }
+  ]);
+
+  const totalViews = verificationViews.length > 0 ? verificationViews[0].totalViews : 0;
 
   return {
     totalCredentials,
-    verificationViews,
-    engagementRate: totalCredentials > 0 ? (verificationViews / totalCredentials * 100).toFixed(1) : 0
+    verificationViews: totalViews,
+    engagementRate: totalCredentials > 0 ? (totalViews / totalCredentials * 100).toFixed(1) : 0
   };
 }
 
 async function getCredentialTrendData(startDate) {
-  return await ActivityLog.aggregate([
+  return await Credential.aggregate([
     {
       $match: {
-        action: "credential_issued",
-        timestamp: { $gte: startDate }
+        issuedAt: { $gte: startDate },
+        status: { $ne: 'draft' }
       }
     },
     {
       $group: {
         _id: {
-          year: { $year: "$timestamp" },
-          month: { $month: "$timestamp" },
-          day: { $dayOfMonth: "$timestamp" }
+          year: { $year: "$issuedAt" },
+          month: { $month: "$issuedAt" },
+          day: { $dayOfMonth: "$issuedAt" }
         },
         count: { $sum: 1 }
       }
@@ -436,18 +530,17 @@ async function getCredentialTrendData(startDate) {
 }
 
 async function getEventAnalytics(startDate) {
-  return await ActivityLog.aggregate([
+  return await Credential.aggregate([
     {
       $match: {
-        action: "credential_issued",
-        timestamp: { $gte: startDate },
-        "details.eventId": { $exists: true }
+        issuedAt: { $gte: startDate },
+        status: { $ne: 'draft' }
       }
     },
     {
       $group: {
-        _id: "$details.eventId",
-        eventName: { $first: "$details.eventName" },
+        _id: "$eventId",
+        eventName: { $first: "$participantData.eventTitle" },
         count: { $sum: 1 }
       }
     }
@@ -455,16 +548,19 @@ async function getEventAnalytics(startDate) {
 }
 
 async function getVerificationData(startDate) {
-  return await ActivityLog.aggregate([
+  return await Credential.aggregate([
     {
       $match: {
-        action: "credential_verified",
-        timestamp: { $gte: startDate }
+        "verificationAttempts.0": { $exists: true },
+        issuedAt: { $gte: startDate }
       }
     },
     {
+      $unwind: "$verificationAttempts"
+    },
+    {
       $group: {
-        _id: "$details.verificationMethod",
+        _id: "$verificationAttempts.result",
         count: { $sum: 1 }
       }
     }
@@ -472,7 +568,7 @@ async function getVerificationData(startDate) {
 }
 
 function convertToCSV(data) {
-  // Simple CSV conversion - you can enhance this
+  // Enhanced CSV conversion
   let csv = "Type,Value,Count,Date\n";
   
   // Add summary data
@@ -480,6 +576,13 @@ function convertToCSV(data) {
     csv += `Total Credentials,${data.summary.totalCredentials},1,${new Date().toISOString()}\n`;
     csv += `Verification Views,${data.summary.verificationViews},1,${new Date().toISOString()}\n`;
     csv += `Engagement Rate,${data.summary.engagementRate}%,1,${new Date().toISOString()}\n`;
+  }
+
+  // Add trend data
+  if (data.trends && data.trends.length > 0) {
+    data.trends.forEach(trend => {
+      csv += `Daily Trend,${trend._id.day}/${trend._id.month}/${trend._id.year},${trend.count},${new Date().toISOString()}\n`;
+    });
   }
 
   return csv;

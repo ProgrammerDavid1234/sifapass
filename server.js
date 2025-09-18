@@ -74,7 +74,6 @@ app.use(cors({
     optionsSuccessStatus: 200
 }));
 
-// Compression middleware
 app.use(compression());
 
 // Logging middleware

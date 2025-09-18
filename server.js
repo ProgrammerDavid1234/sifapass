@@ -66,7 +66,7 @@ app.use(cors({
         'https://sifapass-eta.vercel.app',
         'https://sifapass.vercel.app',
         'https://sifapass.onrender.com/api-docs', // Add this
-        'https://preview--sifapass-01.lovable.app/'
+        'https://preview--sifapass-01.lovable.app'
 
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],

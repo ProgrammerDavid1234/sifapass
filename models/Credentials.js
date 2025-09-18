@@ -10,7 +10,7 @@ const credentialSchema = new mongoose.Schema({
   },
   eventId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "Event",
+    ref: "Event", 
     required: true,
   },
   type: {

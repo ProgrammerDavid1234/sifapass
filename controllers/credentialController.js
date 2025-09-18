@@ -15,7 +15,7 @@ import {
     trackCredentialVerified,
     trackCredentialDownloaded
 } from "../utils/analyticsHelper.js";
-
+import Admin from '../models/Admin.js'
 /**
  * Configure Cloudinary
  */

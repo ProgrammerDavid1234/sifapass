@@ -25,6 +25,13 @@ import certificateRoutes from "./routes/certificateRoutes.js";
 import organizationRoutes from "./routes/Organization.js";
 import designerRoutes from "./routes/designer.js";
 
+// Add these imports to your existing server.js file after the existing route imports
+import apiKeyRoutes from "./routes/apiKeyRoutes.js";
+import webhookRoutes from "./routes/webhookRoutes.js";
+import publicApiRoutes from "./routes/publicApiRoutes.js";
+import zapierRoutes from "./routes/zapierRoutes.js";
+
+
 // Import new designer routes (comment this out if the file doesn't exist yet)
 // import designerRoutes from "./routes/designer.js";
 
@@ -59,6 +66,7 @@ app.use(cors({
         'https://sifapass-eta.vercel.app',
         'https://sifapass.vercel.app',
         'https://sifapass.onrender.com/api-docs', // Add this
+        'https://preview--sifapass-01.lovable.app/'
 
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -300,23 +308,195 @@ app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 app.get("/api", (req, res) => {
     res.json({
         success: true,
-        message: "Sifapass API with Credential Designer",
-        version: "2.0.0",
+        message: "Sifapass API with Credential Designer & Integrations",
+        version: "2.1.0",
         features: {
             credentialDesigner: true,
             templateManagement: true,
             batchOperations: true,
             multiFormatExport: true,
             blockchainVerification: true,
-            qrCodeGeneration: true
+            qrCodeGeneration: true,
+            webhookIntegrations: true,
+            zapierIntegration: true,
+            apiKeyManagement: true,
+            externalApi: true
         },
         endpoints: {
             documentation: `${BASE_URL}/api-docs`,
             health: `${BASE_URL}/health`,
-            mongoTest: `${BASE_URL}/test-mongo`
+            mongoTest: `${BASE_URL}/test-mongo`,
+            externalApi: `${BASE_URL}/api/v1`,
+            webhooks: `${BASE_URL}/api/webhooks`,
+            zapier: `${BASE_URL}/api/zapier`
+        },
+        integrations: {
+            restApi: {
+                version: "v1",
+                baseUrl: `${BASE_URL}/api/v1`,
+                authentication: "API Key (Bearer token)",
+                rateLimit: "1000 requests per 15 minutes"
+            },
+            webhooks: {
+                events: [
+                    "credential.issued",
+                    "credential.verified",
+                    "credential.revoked",
+                    "event.created",
+                    "participant.registered"
+                ],
+                signatureVerification: "HMAC SHA256"
+            },
+            zapier: {
+                triggers: [
+                    "credential-issued",
+                    "credential-verified"
+                ],
+                actions: [
+                    "create-credential"
+                ],
+                searches: []
+            }
         }
     });
 });
+
+// Add integration status endpoints for the dashboard
+app.get("/api/integrations/status", async (req, res) => {
+    try {
+        // Check various integration statuses
+        // You would fetch this data from your database
+
+        const integrationStatus = {
+            apiKeys: {
+                total: 3,
+                active: 2,
+                lastUsed: new Date(),
+                totalRequests: 15420
+            },
+            webhooks: {
+                configured: true,
+                url: "https://example.com/webhook",
+                events: ["credential.issued", "credential.verified"],
+                lastTriggered: new Date(),
+                successRate: 98.5
+            },
+            zapier: {
+                connected: true,
+                webhookUrl: "https://hooks.zapier.com/hooks/catch/123/abc/",
+                activeZaps: 5,
+                lastSync: new Date()
+            }
+        };
+
+        res.json({
+            success: true,
+            data: integrationStatus
+        });
+
+    } catch (error) {
+        console.error('Integration status error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch integration status',
+            error: error.message
+        });
+    }
+});
+
+// Add webhook test endpoint for the dashboard
+app.post("/api/integrations/webhook/test", async (req, res) => {
+    try {
+        const { webhookUrl } = req.body;
+
+        if (!webhookUrl) {
+            return res.status(400).json({
+                success: false,
+                message: 'Webhook URL is required'
+            });
+        }
+
+        // Import the webhook function
+        const { sendWebhook } = await import('./routes/webhookRoutes.js');
+
+        const testPayload = {
+            event: 'webhook.test',
+            timestamp: new Date().toISOString(),
+            data: {
+                message: 'This is a test webhook from SifaPass dashboard',
+                testId: Date.now()
+            }
+        };
+
+        const result = await sendWebhook(webhookUrl, testPayload, 'test_secret');
+
+        res.json({
+            success: true,
+            message: 'Webhook test completed',
+            data: result
+        });
+
+    } catch (error) {
+        console.error('Webhook test error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Webhook test failed',
+            error: error.response?.data || error.message
+        });
+    }
+});
+
+// Add Zapier connection test endpoint
+app.post("/api/integrations/zapier/test", async (req, res) => {
+    try {
+        const { webhookUrl } = req.body;
+
+        if (!webhookUrl) {
+            return res.status(400).json({
+                success: false,
+                message: 'Zapier webhook URL is required'
+            });
+        }
+
+        // Import the Zapier function
+        const { sendToZapier } = await import('./routes/zapierRoutes.js');
+
+        const testData = {
+            id: 'test_' + Date.now(),
+            recipient_email: 'test@example.com',
+            recipient_name: 'Test User',
+            template_name: 'Test Certificate',
+            status: 'issued',
+            issued_at: new Date().toISOString(),
+            test: true
+        };
+
+        // Send test data
+        await sendToZapier('credential.issued', testData);
+
+        res.json({
+            success: true,
+            message: 'Zapier test completed',
+            data: testData
+        });
+
+    } catch (error) {
+        console.error('Zapier test error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Zapier test failed',
+            error: error.message
+        });
+    }
+});
+
+console.log('\nIntegration Features Added:');
+console.log('   - API Key Management (/api/api-keys)');
+console.log('   - Webhook Configuration (/api/webhooks)');
+console.log('   - Zapier Integration (/api/zapier)');
+console.log('   - Public API v1 (/api/v1)');
+console.log('   - Integration Status Endpoints');
+console.log('   - Enhanced Swagger Documentation');
 
 // API Routes - Apply specific rate limiting where needed
 
@@ -341,7 +521,14 @@ app.use("/admin/invoices", invoiceRoutes);
 
 // New designer routes - uncomment when designer.js file is created
 app.use("/api/designer", designerLimiter, designerRoutes);
+app.use("/api/api-keys", apiKeyRoutes);
+app.use("/api/webhooks", webhookRoutes);
+app.use("/api/zapier", zapierRoutes);
 
+
+// Public API routes (versioned)
+app.use("/api/v1", publicApiRoutes);
+app.use("api/admins/settings", adminRoutes);
 // Global error handling middleware
 app.use((error, req, res, next) => {
     console.error('Global Error Handler:', {

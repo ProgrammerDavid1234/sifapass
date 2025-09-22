@@ -144,17 +144,16 @@ export const shareEvent = async (req, res) => {
     }
 };
 
-// Get events created by the authenticated admin
 export const getAdminEvents = async (req, res) => {
   try {
-    const adminId = req.user._id;   // ✅ use _id instead of id
+    const adminId = req.admin._id; // fixed ✅
 
     const events = await Event.find({ createdBy: adminId })
       .select("title description startDate endDate maxParticipants participants createdBy createdAt location");
 
     res.status(200).json({ count: events.length, events });
   } catch (error) {
-    console.error("Error in getAdminEvents:", error);  // ✅ log to debug
+    console.error("Error in getAdminEvents:", error);
     res.status(500).json({ error: error.message });
   }
 };

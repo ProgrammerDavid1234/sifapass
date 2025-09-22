@@ -7,14 +7,14 @@ import Admin from "../models/Admin.js";
 export const authenticate = async (req, res, next) => {
   try {
     const token = req.header("Authorization")?.replace("Bearer ", "");
-    
+
     if (!token) {
       return res.status(401).json({ msg: "No token, authorization denied" });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const admin = await Admin.findById(decoded.id).select("-password");
-    
+
     if (!admin) {
       return res.status(401).json({ msg: "Invalid token, admin not found" });
     }
@@ -62,8 +62,8 @@ export const authenticateUser = (req, res, next) => {
 export const authorizeAdminAccess = (req, res, next) => {
   try {
     const { adminId } = req.params;
-    const currentAdminId = req.admin.id;
-    
+    const currentAdminId = req.admin._id.toString();
+
     // Admin can only access their own data unless they're super admin
     if (adminId !== currentAdminId && req.admin.role !== "super_admin") {
       return res.status(403).json({ msg: "Access denied. You can only access your own data." });
@@ -81,8 +81,8 @@ export const requireRole = (allowedRoles) => {
   return (req, res, next) => {
     try {
       if (!allowedRoles.includes(req.admin.role)) {
-        return res.status(403).json({ 
-          msg: `Access denied. Required role: ${allowedRoles.join(" or ")}` 
+        return res.status(403).json({
+          msg: `Access denied. Required role: ${allowedRoles.join(" or ")}`
         });
       }
       next();
@@ -98,8 +98,8 @@ export const requirePermission = (permission) => {
   return (req, res, next) => {
     try {
       if (!req.admin.hasPermission(permission)) {
-        return res.status(403).json({ 
-          msg: `Access denied. Required permission: ${permission}` 
+        return res.status(403).json({
+          msg: `Access denied. Required permission: ${permission}`
         });
       }
       next();
@@ -119,14 +119,14 @@ export const rateLimitSensitive = (maxAttempts = 5, windowMs = 15 * 60 * 1000) =
   return (req, res, next) => {
     const key = `${req.ip}-${req.admin?.id || req.user?.id}`;
     const now = Date.now();
-    
+
     if (!attempts.has(key)) {
       attempts.set(key, { count: 1, resetTime: now + windowMs });
       return next();
     }
 
     const attemptData = attempts.get(key);
-    
+
     if (now > attemptData.resetTime) {
       attemptData.count = 1;
       attemptData.resetTime = now + windowMs;
@@ -153,14 +153,14 @@ export const logActivity = (action) => {
     try {
       // Store original send function
       const originalSend = res.send;
-      
+
       // Override send to capture response
-      res.send = function(data) {
+      res.send = function (data) {
         // Log activity after successful response
         if (res.statusCode >= 200 && res.statusCode < 300) {
           console.log(`Activity Log: ${action} by ${req.admin?.email || req.user?.email || "unknown"} at ${new Date().toISOString()}`);
         }
-        
+
         // Call original send
         originalSend.call(this, data);
       };
@@ -200,20 +200,19 @@ export const validateInput = (schema) => {
 export const checkSessionTimeout = async (req, res, next) => {
   try {
     const admin = req.admin;
-    
+
     if (admin?.lastLoginAt && admin?.sessionTimeout) {
       const sessionExpiry = new Date(admin.lastLoginAt.getTime() + (admin.sessionTimeout * 60 * 1000));
-      
+
       if (new Date() > sessionExpiry) {
-        return res.status(401).json({ 
+        return res.status(401).json({
           msg: "Session expired. Please login again.",
           code: "SESSION_EXPIRED"
         });
       }
     }
 
-    // Update last activity time
-    if (admin) {
+    if (admin?._id) {
       await Admin.findByIdAndUpdate(admin._id, { lastActivity: new Date() });
     }
 

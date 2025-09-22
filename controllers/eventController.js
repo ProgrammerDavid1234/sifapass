@@ -146,17 +146,19 @@ export const shareEvent = async (req, res) => {
 
 // Get events created by the authenticated admin
 export const getAdminEvents = async (req, res) => {
-    try {
-        const adminId = req.user.id;
+  try {
+    const adminId = req.user._id;   // ✅ use _id instead of id
 
-        const events = await Event.find({ createdBy: adminId })
-            .select("title description startDate endDate maxParticipants participants createdBy createdAt location");
+    const events = await Event.find({ createdBy: adminId })
+      .select("title description startDate endDate maxParticipants participants createdBy createdAt location");
 
-        res.status(200).json({ count: events.length, events });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+    res.status(200).json({ count: events.length, events });
+  } catch (error) {
+    console.error("Error in getAdminEvents:", error);  // ✅ log to debug
+    res.status(500).json({ error: error.message });
+  }
 };
+
 
 // MAIN FUNCTION FOR CREDENTIAL MANAGEMENT DASHBOARD
 export const getEventsWithCredentialStats = async (req, res) => {

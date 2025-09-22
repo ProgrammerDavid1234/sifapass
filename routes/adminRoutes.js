@@ -1,15 +1,15 @@
 import express from "express";
-import { 
-  registerAdmin, 
-  loginAdmin, 
-  getMetrics, 
-  downloadReport, 
-  verifyEmail, 
-  resendVerificationEmail 
+import {
+  registerAdmin,
+  loginAdmin,
+  getMetrics,
+  downloadReport,
+  verifyEmail,
+  resendVerificationEmail
 } from "../controllers/adminController.js";
 
 // Import the new settings controller functions
-import { 
+import {
   getSettings,
   updateProfile,
   updatePassword,
@@ -151,6 +151,40 @@ router.get("/verify-email", verifyEmail);
 router.post("/resend-verification", resendVerificationEmail);
 
 // SETTINGS ROUTES
+
+// ===============================
+// Get Current Admin ID
+// ===============================
+/**
+ * @swagger
+ * /api/admin/settings/current-admin-id:
+ *   get:
+ *     summary: Get the currently authenticated admin's ID
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Returns the admin ID of the logged-in user
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 adminId:
+ *                   type: string
+ *       401:
+ *         description: Unauthorized, token missing or invalid
+ */
+router.get("/settings/current-admin-id", authenticate, (req, res) => {
+  res.json({
+    success: true,
+    adminId: req.admin?._id || req.user?.id || req.user?._id,
+  });
+});
+
 /**
  * @swagger
  * /api/admin/settings/{adminId}:

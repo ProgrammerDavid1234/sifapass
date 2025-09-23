@@ -25,7 +25,7 @@ import {
 } from "../controllers/credentialController.js";
 
 const router = express.Router();
-import { authenticate } from "../middleware/auth.js";
+import { authenticate, authenticateUser } from "../middleware/auth.js";
 import multer from "multer";
 import path from "path";
 import upload from "../middleware/upload.js";
@@ -243,7 +243,7 @@ router.get("/stats", authenticate, getCredentialStats);
  *       500:
  *         description: Server error
  */
-router.get("/my", authenticate, getMyCredentials);
+router.get("/my", authenticateUser, getMyCredentials);
 
 
 /**

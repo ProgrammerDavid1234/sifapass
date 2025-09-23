@@ -9,7 +9,7 @@ import Credential from "../models/Credentials.js";
 import Event from "../models/Event.js";
 import { exportParticipants } from "../controllers/participantController.js";
 const router = express.Router();
-import { authenticate } from "../middleware/auth.js";
+import { authenticateUser } from "../middleware/auth.js";
 
 /**
  * @swagger
@@ -382,7 +382,7 @@ router.get("/:id", async (req, res) => {
  *       200:
  *         description: Participant updated
  */
-router.put("/:id", authenticate, async (req, res) => {
+router.put("/:id", authenticateUser, async (req, res) => {
     try {
         const { firstName, lastName, email, phone, bio, profilePicture } = req.body;
         
@@ -469,7 +469,7 @@ router.put("/:id", authenticate, async (req, res) => {
  *       404:
  *         description: Participant not found
  */
-router.put("/:id/change-password", authenticate, async (req, res) => {
+router.put("/:id/change-password", authenticateUser, async (req, res) => {
     try {
         const { currentPassword, newPassword } = req.body;
 
@@ -550,7 +550,7 @@ router.put("/:id/change-password", authenticate, async (req, res) => {
  *       200:
  *         description: Settings updated successfully
  */
-router.get("/:id/settings", authenticate, async (req, res) => {
+router.get("/:id/settings", authenticateUser, async (req, res) => {
     try {
         const participant = await Participant.findById(req.params.id).select('settings preferences');
         if (!participant) return res.status(404).json({ error: "Participant not found" });
@@ -573,7 +573,7 @@ router.get("/:id/settings", authenticate, async (req, res) => {
     }
 });
 
-router.put("/:id/settings", authenticate, async (req, res) => {
+router.put("/:id/settings", authenticateUser, async (req, res) => {
     try {
         const { 
             emailNotifications, 
@@ -662,7 +662,7 @@ router.get("/export/all", async (req, res) => {
  *       200:
  *         description: Event shared successfully
  */
-router.post("/share", authenticate, async (req, res) => {
+router.post("/share", authenticateUser, async (req, res) => {
     try {
         const { eventId, participantIds } = req.body;
         await Participant.updateMany(
@@ -696,7 +696,7 @@ router.post("/share", authenticate, async (req, res) => {
  *       200:
  *         description: Participants reconciled successfully
  */
-router.put("/reconcile", authenticate, async (req, res) => {
+router.put("/reconcile", authenticateUser, async (req, res) => {
     try {
         const { participantIds } = req.body;
         await Participant.updateMany(
@@ -852,7 +852,7 @@ router.get("/:id/credentials", async (req, res) => {
  *       404:
  *         description: Credential not found
  */
-router.get("/:id/credentials/:credId/download", authenticate, async (req, res) => {
+router.get("/:id/credentials/:credId/download", authenticateUser, async (req, res) => {
     try {
         const { id: participantId, credId } = req.params;
         const { format = 'pdf' } = req.query;
@@ -971,7 +971,7 @@ router.get("/:id/credentials/:credId/download", authenticate, async (req, res) =
  *       200:
  *         description: Credential shared successfully
  */
-router.post("/:id/credentials/:credId/share", authenticate, async (req, res) => {
+router.post("/:id/credentials/:credId/share", authenticateUser, async (req, res) => {
     try {
         const { id: participantId, credId } = req.params;
         const { email, message } = req.body;
@@ -1107,7 +1107,7 @@ router.get("/:id/events", async (req, res) => {
  *           type: string
  *         description: Event ID
  */
-router.get("/:id/events/:eventId", authenticate, async (req, res) => {
+router.get("/:id/events/:eventId", authenticateUser, async (req, res) => {
     try {
         const { id: participantId, eventId } = req.params;
 
@@ -1147,7 +1147,7 @@ router.get("/:id/events/:eventId", authenticate, async (req, res) => {
  *           type: string
  *         description: Event ID
  */
-router.post("/:id/events/:eventId/interact", authenticate, async (req, res) => {
+router.post("/:id/events/:eventId/interact", authenticateUser, async (req, res) => {
     try {
         const { id: participantId, eventId } = req.params;
         const { action, comment, rating } = req.body;
@@ -1206,7 +1206,7 @@ router.post("/:id/events/:eventId/interact", authenticate, async (req, res) => {
  *       400:
  *         description: Already registered
  */
-router.post("/:participantId/events/:eventId/register", authenticate, async (req, res) => {
+router.post("/:participantId/events/:eventId/register", authenticateUser, async (req, res) => {
     try {
         const { participantId, eventId } = req.params;
 

@@ -12,8 +12,9 @@ import {
   getEventWithParticipants,
   getRegistrationLink,
 } from "../controllers/eventController.js";
-import { authenticate } from "../middleware/auth.js";
+import { authenticate, authenticateAdminOrParticipant, authenticateUser } from "../middleware/auth.js";
 const router = express.Router();
+
 
 /**
  * @swagger
@@ -444,7 +445,7 @@ router.get("/dashboard/credential-management", authenticate, getEventsWithCreden
  *       500:
  *         description: Server error
  */
-router.get("/:eventId/participants", authenticate, getEventWithParticipants);
+router.get("/:eventId/participants", authenticateAdminOrParticipant, getEventWithParticipants);
 
 /**
  * @swagger

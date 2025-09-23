@@ -21,7 +21,7 @@ export const createEvent = async (req, res) => {
             createdBy: req.admin._id,
         });
 
-        
+
         await event.save();
         res.status(201).json({ message: "Event created successfully", event });
     } catch (error) {
@@ -256,7 +256,7 @@ export const getEventsWithCredentialStats = async (req, res) => {
 export const getEventWithParticipants = async (req, res) => {
     try {
         const { eventId } = req.params;
-        const adminId = req.user.id;
+        const user = req.user; // could be admin or participant
 
         // Validate eventId
         if (!mongoose.Types.ObjectId.isValid(eventId)) {
@@ -266,13 +266,27 @@ export const getEventWithParticipants = async (req, res) => {
             });
         }
 
-        const event = await Event.findOne({ _id: eventId, createdBy: adminId })
-            .populate({
-                path: 'participants',
-                select: 'fullName email createdAt',
-                options: { strictPopulate: false } // Add this to handle missing references
-            })
-            .lean(); // Add lean() for better performance
+        let event;
+
+        if (user.role === "admin") {
+            // Admin can only see events they created
+            event = await Event.findOne({ _id: eventId, createdBy: user.id })
+                .populate({
+                    path: 'participants',
+                    select: 'fullName email createdAt',
+                    options: { strictPopulate: false }
+                })
+                .lean();
+        } else {
+            // Participant can only see events they are part of
+            event = await Event.findOne({ _id: eventId, participants: user.id })
+                .populate({
+                    path: 'participants',
+                    select: 'fullName email createdAt',
+                    options: { strictPopulate: false }
+                })
+                .lean();
+        }
 
         if (!event) {
             return res.status(404).json({
@@ -281,50 +295,28 @@ export const getEventWithParticipants = async (req, res) => {
             });
         }
 
-        // Ensure participants array exists and filter out null/undefined entries
-        const validParticipants = (event.participants || []).filter(participant =>
-            participant && participant._id && participant.fullName && participant.email
+        // same participant/credential logic you already have...
+        const validParticipants = (event.participants || []).filter(
+            p => p && p._id && p.fullName && p.email
         );
 
-        // Get credential information for each participant
-        let participantsWithCredentials = [];
+        let participantsWithCredentials = await Promise.all(
+            validParticipants.map(async (participant) => {
+                let credentials = await Credential.find({
+                    participantId: participant._id,
+                    eventId: event._id
+                }).select('status issuedAt credentialType').lean();
 
-        try {
-            participantsWithCredentials = await Promise.all(
-                validParticipants.map(async (participant) => {
-                    let credentials = [];
-                    try {
-                        credentials = await Credential.find({
-                            participantId: participant._id,
-                            eventId: event._id
-                        }).select('status issuedAt credentialType').lean();
-                    } catch (credError) {
-                        console.log('Error fetching credentials for participant:', participant._id, credError.message);
-                        credentials = [];
-                    }
-
-                    return {
-                        _id: participant._id,
-                        fullName: participant.fullName,
-                        email: participant.email,
-                        registeredAt: participant.createdAt,
-                        credentials: credentials,
-                        hasCredential: credentials.length > 0 && credentials.some(c => c.status === 'issued')
-                    };
-                })
-            );
-        } catch (participantError) {
-            console.log('Error processing participants:', participantError.message);
-            // Fallback to basic participant info without credentials
-            participantsWithCredentials = validParticipants.map(participant => ({
-                _id: participant._id,
-                fullName: participant.fullName,
-                email: participant.email,
-                registeredAt: participant.createdAt,
-                credentials: [],
-                hasCredential: false
-            }));
-        }
+                return {
+                    _id: participant._id,
+                    fullName: participant.fullName,
+                    email: participant.email,
+                    registeredAt: participant.createdAt,
+                    credentials,
+                    hasCredential: credentials.some(c => c.status === 'issued')
+                };
+            })
+        );
 
         const credentialStats = {
             total: validParticipants.length,
@@ -357,6 +349,7 @@ export const getEventWithParticipants = async (req, res) => {
         });
     }
 };
+
 
 
 // Generate registration link

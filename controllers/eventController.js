@@ -8,7 +8,7 @@ import bcrypt from "bcrypt"; // ADD THIS LINE
 
 export const createEvent = async (req, res) => {
     try {
-        const { title, description, startDate, endDate, maxParticipants, location } = req.body;
+        const { title, description, startDate, endDate, maxParticipants, location, certificateTemplate } = req.body;
 
         const event = new Event({
             title,
@@ -17,9 +17,11 @@ export const createEvent = async (req, res) => {
             endDate,
             maxParticipants,
             location,
-            createdBy: req.user.id, // save admin ID
+            certificateTemplate,
+            createdBy: req.admin._id,
         });
 
+        
         await event.save();
         res.status(201).json({ message: "Event created successfully", event });
     } catch (error) {
@@ -145,17 +147,17 @@ export const shareEvent = async (req, res) => {
 };
 
 export const getAdminEvents = async (req, res) => {
-  try {
-    const adminId = req.admin._id; // fixed ✅
+    try {
+        const adminId = req.admin._id; // fixed ✅
 
-    const events = await Event.find({ createdBy: adminId })
-      .select("title description startDate endDate maxParticipants participants createdBy createdAt location");
+        const events = await Event.find({ createdBy: adminId })
+            .select("title description startDate endDate maxParticipants participants createdBy createdAt location");
 
-    res.status(200).json({ count: events.length, events });
-  } catch (error) {
-    console.error("Error in getAdminEvents:", error);
-    res.status(500).json({ error: error.message });
-  }
+        res.status(200).json({ count: events.length, events });
+    } catch (error) {
+        console.error("Error in getAdminEvents:", error);
+        res.status(500).json({ error: error.message });
+    }
 };
 
 

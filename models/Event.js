@@ -10,19 +10,19 @@ const eventSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   location: { type: String },
-  
+
   // New fields for your credential management interface
-  eventCode: { 
-    type: String, 
+  eventCode: {
+    type: String,
     unique: true,
-    default: function() {
+    default: function () {
       const year = new Date().getFullYear();
       const randomId = Math.random().toString(36).substr(2, 3).toUpperCase();
       return `EVT-${year}-${randomId}`;
     }
   },
-  category: { 
-    type: String, 
+  category: {
+    type: String,
     enum: ['Technology', 'Marketing', 'Business', 'Education', 'Healthcare', 'General'],
     default: 'General'
   },
@@ -32,15 +32,19 @@ const eventSchema = new mongoose.Schema({
     default: 'published'
   },
   registrationOpen: { type: Boolean, default: true },
-  
+  certificateTemplate: {
+    id: { type: String },
+    name: { type: String },
+    preview: { type: String }
+  },
   // Additional metadata
   tags: [String],
   isPublic: { type: Boolean, default: true },
-  
+
   // Event settings
   requireApproval: { type: Boolean, default: false },
   allowWaitlist: { type: Boolean, default: true },
-  
+
   // Updated timestamp
   updatedAt: { type: Date, default: Date.now }
 });
@@ -50,11 +54,11 @@ eventSchema.index({ createdBy: 1, startDate: -1 });
 eventSchema.index({ eventCode: 1 });
 
 // Virtual for computed status based on dates
-eventSchema.virtual('computedStatus').get(function() {
+eventSchema.virtual('computedStatus').get(function () {
   const now = new Date();
   const eventStart = new Date(this.startDate);
   const eventEnd = this.endDate ? new Date(this.endDate) : eventStart;
-  
+
   if (now >= eventStart && now <= eventEnd) {
     return 'active';
   } else if (now > eventEnd) {
@@ -65,7 +69,7 @@ eventSchema.virtual('computedStatus').get(function() {
 });
 
 // Pre-save middleware to update the updatedAt field
-eventSchema.pre('save', function(next) {
+eventSchema.pre('save', function (next) {
   this.updatedAt = new Date();
   next();
 });

@@ -15,7 +15,9 @@ import {
     trackCredentialVerified,
     trackCredentialDownloaded
 } from "../utils/analyticsHelper.js";
-import Admin from '../models/Admin.js'
+import Admin from '../models/Admin.js';
+import Participant from '../models/Participant.js'
+import Event from '../models/Event.js'
 /**
  * Configure Cloudinary
  */
@@ -24,6 +26,135 @@ cloudinary.config({
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
 });
+// credentialController.js - Replace the generateCertificateImage function with this
+const generateCertificateImage = async (designData, participantData, qrCodeDataUrl) => {
+    try {
+        console.log('Starting simple template image generation...');
+
+        const canvasWidth = designData.canvas?.width || 1200;
+        const canvasHeight = designData.canvas?.height || 800;
+
+        // Create a simple SVG template
+        const svg = generateSVGCertificate(designData, participantData, canvasWidth, canvasHeight);
+
+        console.log('SVG generated, converting to PNG...');
+
+        // Convert SVG to PNG using Sharp
+        const pngBuffer = await sharp(Buffer.from(svg))
+            .png()
+            .resize(canvasWidth, canvasHeight)
+            .toBuffer();
+
+        console.log('PNG generated successfully, size:', pngBuffer.length);
+
+        return pngBuffer;
+
+    } catch (error) {
+        console.error('Simple image generation error:', error);
+        throw new Error(`Simple image generation failed: ${error.message}`);
+    }
+};
+
+
+// Helper function to generate HTML from design data
+const generateHTMLFromDesign = (designData, participantData, qrCodeDataUrl) => {
+    const canvasWidth = designData.canvas?.width || 1200;
+    const canvasHeight = designData.canvas?.height || 800;
+
+    // Generate background CSS
+    let backgroundCSS = 'background: #ffffff;';
+    if (designData.background) {
+        if (designData.background.type === 'gradient') {
+            const primary = designData.background.primaryColor || '#3498db';
+            const secondary = designData.background.secondaryColor || '#e74c3c';
+            backgroundCSS = `background: linear-gradient(135deg, ${primary}, ${secondary});`;
+        } else {
+            backgroundCSS = `background: ${designData.background.color || '#ffffff'};`;
+        }
+    }
+
+    // Generate elements HTML
+    let elementsHTML = '';
+    if (designData.elements && Array.isArray(designData.elements)) {
+        elementsHTML = designData.elements.map(element => {
+            if (element.type === 'text') {
+                // Replace placeholders with actual data
+                let text = element.text || '';
+                text = text.replace('{{participantName}}', participantData.name || 'Participant');
+                text = text.replace('{{eventTitle}}', participantData.eventTitle || 'Event');
+                text = text.replace('{{eventDate}}', participantData.eventDate || new Date().toDateString());
+                text = text.replace('{{skills}}', participantData.skills || '');
+
+                // Handle multiline text
+                const formattedText = text.split('\n').join('<br>');
+
+                return `
+          <div style="
+            position: absolute;
+            left: ${element.x || 0}px;
+            top: ${element.y || 0}px;
+            width: ${element.width || 'auto'}px;
+            height: ${element.height || 'auto'}px;
+            font-size: ${element.fontSize || 24}px;
+            font-family: ${element.fontFamily || 'Arial, sans-serif'};
+            font-weight: ${element.fontWeight || 'normal'};
+            color: ${element.color || '#000000'};
+            text-align: ${element.textAlign || 'left'};
+            line-height: 1.2;
+            overflow: hidden;
+          ">
+            ${formattedText}
+          </div>
+        `;
+            }
+            return '';
+        }).join('');
+    }
+
+    // Add QR code if available
+    let qrCodeHTML = '';
+    if (qrCodeDataUrl) {
+        qrCodeHTML = `
+      <div style="
+        position: absolute;
+        bottom: 50px;
+        right: 50px;
+        width: 100px;
+        height: 100px;
+      ">
+        <img src="${qrCodeDataUrl}" style="width: 100%; height: 100%;" alt="QR Code">
+      </div>
+    `;
+    }
+
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+        body {
+          width: ${canvasWidth}px;
+          height: ${canvasHeight}px;
+          ${backgroundCSS}
+          position: relative;
+          font-family: Arial, sans-serif;
+          overflow: hidden;
+        }
+      </style>
+    </head>
+    <body>
+      ${elementsHTML}
+      ${qrCodeHTML}
+    </body>
+    </html>
+  `;
+};
 
 /**
  * Create or Import Credential
@@ -143,6 +274,10 @@ export const createCredential = async (req, res) => {
 /**
  * Create Credential with Custom Design
  */
+// credentialController.js - Debug version with detailed error logging
+
+// credentialController.js - Updated createCredentialWithDesign function
+
 export const createCredentialWithDesign = async (req, res) => {
     try {
         const {
@@ -155,96 +290,61 @@ export const createCredentialWithDesign = async (req, res) => {
             participantData,
         } = req.body;
 
+        console.log('Creating credential with design...', { participantId, eventId, type });
+
         // Validate required fields
         if (!participantId || !eventId || !title || !type) {
             return res.status(400).json({
+                success: false,
                 message: "Missing required fields: participantId, eventId, title, type"
             });
         }
 
-        // Generate blockchain hash
+        // Validate participant and event exist
+        const participant = await Participant.findById(participantId);
+        const event = await Event.findById(eventId);
+
+        if (!participant) {
+            return res.status(400).json({
+                success: false,
+                message: "Participant not found"
+            });
+        }
+
+        if (!event) {
+            return res.status(400).json({
+                success: false,
+                message: "Event not found"
+            });
+        }
+
+        // Generate blockchain hash for verification
         const blockchainHash = crypto
             .createHash("sha256")
             .update(JSON.stringify({ participantId, eventId, title, type }) + Date.now())
             .digest("hex");
 
-        // Generate QR code
-        const verificationUrl = `${process.env.FRONTEND_URL}/verify/${blockchainHash}`;
+        // Generate verification URL and QR code
+        const verificationUrl = `${process.env.FRONTEND_URL || 'https://sifapass.onrender.com'}/verify/${blockchainHash}`;
         const qrCode = await QRCode.toDataURL(verificationUrl);
 
-        console.log('Generating credential image during creation...');
+        console.log('Generated blockchain hash and QR code');
 
-        // ** KEY FIX: Generate the actual credential image NOW **
-        let credentialImageUrl = null;
-        let exportLinks = {};
+        // Prepare participant data for rendering
+        const renderData = {
+            name: participantData?.name || participant.fullName || participant.name,
+            eventTitle: participantData?.eventTitle || event.title || event.name,
+            eventDate: participantData?.eventDate || (event.startDate ? new Date(event.startDate).toLocaleDateString() : new Date().toLocaleDateString()),
+            skills: participantData?.skills || participant.skills || '',
+            issueDate: new Date().toLocaleDateString(),
+            participantEmail: participant.email,
+            verificationUrl: verificationUrl,
+            blockchainHash: blockchainHash
+        };
 
-        try {
-            // Generate the credential image using Canvas method (more reliable)
-            const pngBuffer = await generatePNGWithCanvas(
-                designData || {},
-                participantData || {},
-                blockchainHash // Use hash as temporary ID
-            );
+        console.log('Render data prepared:', renderData);
 
-            // Upload the generated image to Cloudinary
-            const uploadResult = await new Promise((resolve, reject) => {
-                cloudinary.uploader.upload_stream(
-                    {
-                        resource_type: "image",
-                        folder: "credentials/generated",
-                        format: "png",
-                        public_id: `credential_${blockchainHash}`,
-                        overwrite: true
-                    },
-                    (error, result) => {
-                        if (error) {
-                            console.error('Image upload error:', error);
-                            return reject(error);
-                        }
-                        resolve(result);
-                    }
-                ).end(pngBuffer);
-            });
-
-            credentialImageUrl = uploadResult.secure_url;
-            exportLinks.png = uploadResult.secure_url;
-
-            console.log('Credential image generated and uploaded:', credentialImageUrl);
-
-            // Also generate PDF version
-            try {
-                const html = generateCredentialHTML(designData, participantData);
-                const pdfBuffer = await generatePDFFromHTML(html);
-
-                const pdfUploadResult = await new Promise((resolve, reject) => {
-                    cloudinary.uploader.upload_stream(
-                        {
-                            resource_type: "raw",
-                            folder: "credentials/generated",
-                            format: "pdf",
-                            public_id: `credential_${blockchainHash}`,
-                            overwrite: true
-                        },
-                        (error, result) => {
-                            if (error) return reject(error);
-                            resolve(result);
-                        }
-                    ).end(pdfBuffer);
-                });
-
-                exportLinks.pdf = pdfUploadResult.secure_url;
-                console.log('PDF version also generated');
-            } catch (pdfError) {
-                console.warn('PDF generation failed during creation:', pdfError.message);
-                // Continue without PDF - it's not critical
-            }
-
-        } catch (imageError) {
-            console.error('Failed to generate credential image during creation:', imageError);
-            // We'll continue without the image - it can be generated on-demand later
-        }
-
-        // Save credential with the generated image
+        // Create credential record first (so we have an ID for image generation)
         const credential = await Credential.create({
             participantId,
             eventId,
@@ -255,30 +355,397 @@ export const createCredentialWithDesign = async (req, res) => {
             blockchainHash,
             qrCode,
             verificationUrl,
-            participantData: participantData || {},
+            participantData: renderData,
             issuedBy: req.user.id,
-            // ** IMPORTANT: Store the generated image URL **
-            downloadLink: credentialImageUrl, // Main credential image
-            exportLinks: exportLinks, // All format links
-            status: 'issued',
+            createdBy: req.user.id, // Add this for admin queries
+            status: 'generating', // Temporary status while generating
             issuedAt: new Date()
         });
 
-        res.status(201).json({
-            success: true,
-            message: `${type} created successfully`,
-            credential: {
-                ...credential.toJSON(),
-                credentialImageUrl, // Include in response
-                hasGeneratedImage: !!credentialImageUrl
-            }
-        });
+        console.log('Credential record created:', credential._id);
+
+        // Now generate the certificate image
+        let credentialImageUrl = null;
+        let exportLinks = {};
+
+        try {
+            console.log('Starting image generation...');
+
+            // Use Canvas method (more reliable than Puppeteer)
+            const pngBuffer = await generateCredentialImage(designData, renderData, credential._id);
+
+            console.log('Image generated, buffer size:', pngBuffer.length);
+
+            // Upload to Cloudinary
+            const uploadResult = await new Promise((resolve, reject) => {
+                const uploadOptions = {
+                    resource_type: "image",
+                    folder: "credentials/generated",
+                    format: "png",
+                    public_id: `credential_${credential._id}`,
+                    overwrite: true,
+                    timeout: 60000 // 60 seconds timeout
+                };
+
+                console.log('Uploading to Cloudinary with options:', uploadOptions);
+
+                const uploadStream = cloudinary.uploader.upload_stream(
+                    uploadOptions,
+                    (error, result) => {
+                        if (error) {
+                            console.error('Cloudinary upload error:', error);
+                            return reject(error);
+                        }
+                        console.log('Cloudinary upload successful:', result.secure_url);
+                        resolve(result);
+                    }
+                );
+
+                uploadStream.end(pngBuffer);
+            });
+
+            credentialImageUrl = uploadResult.secure_url;
+            exportLinks.png = uploadResult.secure_url;
+
+            console.log('Certificate image uploaded successfully:', credentialImageUrl);
+
+            // Update credential with the generated image URLs and mark as complete
+            await Credential.findByIdAndUpdate(credential._id, {
+                downloadLink: credentialImageUrl,
+                exportLinks: exportLinks,
+                status: 'issued' // Mark as complete
+            });
+
+            // Track the credential issuance
+            await trackCredentialIssued({
+                id: credential._id,
+                type: credential.type,
+                eventId: credential.eventId,
+                eventName: event.title || event.name,
+                recipientEmail: participant.email,
+                credentialType: type
+            }, req.user.email || req.user.id);
+
+            console.log('Credential creation completed successfully');
+
+            res.status(201).json({
+                success: true,
+                message: `${type} created successfully`,
+                credential: {
+                    id: credential._id,
+                    title: credential.title,
+                    type: credential.type,
+                    status: 'issued',
+                    participantName: renderData.name,
+                    eventTitle: renderData.eventTitle,
+                    blockchainHash: credential.blockchainHash,
+                    verificationUrl: credential.verificationUrl,
+                    qrCode: credential.qrCode,
+                    downloadLink: credentialImageUrl,
+                    credentialImageUrl: credentialImageUrl, // Include for frontend
+                    exportLinks: exportLinks,
+                    issuedAt: credential.issuedAt,
+                    hasGeneratedImage: true
+                }
+            });
+
+        } catch (imageError) {
+            console.error('Image generation failed:', imageError);
+
+            // Mark credential as failed but keep the record
+            await Credential.findByIdAndUpdate(credential._id, {
+                status: 'failed',
+                errorMessage: imageError.message
+            });
+
+            // Still return success but indicate image generation failed
+            res.status(201).json({
+                success: true,
+                message: `${type} record created but image generation failed`,
+                credential: {
+                    id: credential._id,
+                    title: credential.title,
+                    type: credential.type,
+                    status: 'failed',
+                    participantName: renderData.name,
+                    eventTitle: renderData.eventTitle,
+                    blockchainHash: credential.blockchainHash,
+                    verificationUrl: credential.verificationUrl,
+                    qrCode: credential.qrCode,
+                    issuedAt: credential.issuedAt,
+                    hasGeneratedImage: false,
+                    error: 'Image generation failed. Can be retried later.'
+                }
+            });
+        }
+
     } catch (error) {
         console.error("Create Credential Error:", error);
         res.status(500).json({
+            success: false,
             message: "Failed to create credential",
             error: error.message
         });
+    }
+};
+
+const generateCredentialImage = async (designData, participantData, credentialId) => {
+    console.log('Generating credential image with Canvas...');
+    
+    const { createCanvas, loadImage, registerFont } = require('canvas');
+    
+    try {
+        // Get canvas dimensions from design data
+        const width = designData?.canvasSettings?.width || designData?.canvas?.width || 1200;
+        const height = designData?.canvasSettings?.height || designData?.canvas?.height || 800;
+        
+        console.log('Canvas dimensions:', { width, height });
+        
+        const canvas = createCanvas(width, height);
+        const ctx = canvas.getContext('2d');
+        
+        // Set high quality rendering
+        ctx.antialias = 'subpixel';
+        ctx.quality = 'best';
+        ctx.textRenderingOptimization = 'optimizeQuality';
+        
+        // Clear canvas and set background
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+        
+        // Apply background from design data
+        await applyBackground(ctx, designData.canvasSettings || designData.background, width, height);
+        
+        // Render elements from design data
+        if (designData.elements && Array.isArray(designData.elements)) {
+            console.log('Rendering', designData.elements.length, 'elements');
+            
+            for (const element of designData.elements) {
+                await renderElementOnCanvas(ctx, element, participantData, width, height);
+            }
+        }
+        
+        // Add QR code if verification is enabled
+        if (participantData.verificationUrl) {
+            await addQRCodeToCanvas(ctx, participantData.verificationUrl, width, height);
+        }
+        
+        console.log('Canvas rendering complete, converting to buffer...');
+        
+        // Convert to PNG buffer
+        const buffer = canvas.toBuffer('image/png');
+        console.log('PNG buffer created, size:', buffer.length);
+        
+        return buffer;
+        
+    } catch (error) {
+        console.error('Canvas generation error:', error);
+        throw new Error(`Failed to generate image: ${error.message}`);
+    }
+};
+
+// Helper function to generate SVG
+const generateSVGCertificate = (designData, participantData, width, height) => {
+    // Generate background
+    let backgroundDef = '';
+    let backgroundRect = `<rect width="${width}" height="${height}" fill="#ffffff"/>`;
+
+    if (designData.background?.type === 'gradient') {
+        const primary = designData.background.primaryColor || '#3498db';
+        const secondary = designData.background.secondaryColor || '#e74c3c';
+        backgroundDef = `
+      <defs>
+        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:${primary};stop-opacity:1" />
+          <stop offset="100%" style="stop-color:${secondary};stop-opacity:1" />
+        </linearGradient>
+      </defs>
+    `;
+        backgroundRect = `<rect width="${width}" height="${height}" fill="url(#bgGrad)"/>`;
+    } else if (designData.background?.color) {
+        backgroundRect = `<rect width="${width}" height="${height}" fill="${designData.background.color}"/>`;
+    }
+
+    // Generate text elements
+    let textElements = '';
+    if (designData.elements && Array.isArray(designData.elements)) {
+        textElements = designData.elements
+            .filter(element => element.type === 'text')
+            .map(element => {
+                // Replace placeholders
+                let text = element.text || '';
+                text = text.replace('{{participantName}}', participantData.name || 'Participant');
+                text = text.replace('{{eventTitle}}', participantData.eventTitle || 'Event');
+                text = text.replace('{{eventDate}}', participantData.eventDate || new Date().toDateString());
+                text = text.replace('{{skills}}', participantData.skills || '');
+
+                const fontSize = element.fontSize || 24;
+                const fontFamily = element.fontFamily || 'Arial, sans-serif';
+                const fontWeight = element.fontWeight || 'normal';
+                const color = element.color || '#000000';
+                const x = element.x || 0;
+                const y = (element.y || 0) + fontSize; // Adjust y for SVG text baseline
+
+                // Handle multiline text
+                if (text.includes('\n')) {
+                    const lines = text.split('\n');
+                    const lineHeight = fontSize * 1.2;
+                    return lines.map((line, index) => `
+            <text x="${x}" y="${y + (index * lineHeight)}" 
+                  font-family="${fontFamily}" 
+                  font-size="${fontSize}" 
+                  font-weight="${fontWeight}" 
+                  fill="${color}"
+                  text-anchor="start">
+              ${escapeXml(line)}
+            </text>
+          `).join('');
+                } else {
+                    return `
+            <text x="${x}" y="${y}" 
+                  font-family="${fontFamily}" 
+                  font-size="${fontSize}" 
+                  font-weight="${fontWeight}" 
+                  fill="${color}"
+                  text-anchor="start">
+              ${escapeXml(text)}
+            </text>
+          `;
+                }
+            }).join('');
+    }
+
+    // Create the complete SVG
+    const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      ${backgroundDef}
+      ${backgroundRect}
+      ${textElements}
+    </svg>
+  `;
+
+    return svg;
+};
+
+// Helper to escape XML characters
+const escapeXml = (text) => {
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+};
+
+
+const wrapText = (ctx, text, x, y, maxWidth, lineHeight) => {
+    const words = text.split(' ');
+    let line = '';
+    let currentY = y;
+
+    for (let i = 0; i < words.length; i++) {
+        const testLine = line + words[i] + ' ';
+        const testWidth = ctx.measureText(testLine).width;
+
+        if (testWidth > maxWidth && i > 0) {
+            ctx.fillText(line, x, currentY);
+            line = words[i] + ' ';
+            currentY += lineHeight;
+        } else {
+            line = testLine;
+        }
+    }
+    ctx.fillText(line, x, currentY);
+};
+
+const renderElementOnCanvas = async (ctx, element, participantData, canvasWidth, canvasHeight) => {
+    try {
+        if (element.type === 'text') {
+            // Replace placeholders in text content
+            let content = element.content || '';
+            content = content.replace('{participant_name}', participantData.name || 'N/A');
+            content = content.replace('{event_name}', participantData.eventTitle || 'N/A');
+            content = content.replace('{issue_date}', participantData.issueDate || new Date().toLocaleDateString());
+            content = content.replace('{skills}', participantData.skills || '');
+            content = content.replace('{verification_url}', participantData.verificationUrl || '');
+
+            // Set text properties
+            const fontSize = element.fontSize || 16;
+            const fontFamily = element.fontFamily || 'Arial, sans-serif';
+            const fontWeight = element.fontWeight || 'normal';
+            const color = element.color || '#000000';
+            const textAlign = element.textAlign || 'left';
+
+            ctx.fillStyle = color;
+            ctx.font = `${fontWeight} ${fontSize}px ${fontFamily.split(',')[0]}`;
+            ctx.textAlign = textAlign;
+            ctx.textBaseline = 'top';
+
+            // Position and draw text
+            const x = element.x || 0;
+            const y = element.y || 0;
+            const maxWidth = element.width || canvasWidth - x;
+
+            // Handle text wrapping if needed
+            if (content.length > 50) {
+                wrapText(ctx, content, x, y, maxWidth, fontSize + 5);
+            } else {
+                ctx.fillText(content, x, y, maxWidth);
+            }
+
+        } else if (element.type === 'image' && element.src) {
+            try {
+                const img = await loadImage(element.src);
+                ctx.drawImage(img, element.x || 0, element.y || 0, element.width || 100, element.height || 100);
+            } catch (imgError) {
+                console.warn('Failed to load element image:', element.src);
+            }
+        } else if (element.type === 'qr-code') {
+            // QR code will be handled separately
+            console.log('QR code element found, will be rendered at end');
+        }
+
+    } catch (error) {
+        console.error('Error rendering element:', error);
+    }
+};
+
+const applyBackground = async (ctx, backgroundSettings, width, height) => {
+    try {
+        if (!backgroundSettings) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, width, height);
+            return;
+        }
+        
+        const bgType = backgroundSettings.backgroundType || backgroundSettings.type;
+        
+        if (bgType === 'gradient') {
+            const gradient = ctx.createLinearGradient(0, 0, width, 0);
+            gradient.addColorStop(0, backgroundSettings.gradientFrom || backgroundSettings.primaryColor || '#3498db');
+            gradient.addColorStop(1, backgroundSettings.gradientTo || backgroundSettings.secondaryColor || '#e74c3c');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, width, height);
+        } else if (bgType === 'solid') {
+            ctx.fillStyle = backgroundSettings.backgroundColor || backgroundSettings.primaryColor || '#ffffff';
+            ctx.fillRect(0, 0, width, height);
+        } else if (bgType === 'image' && backgroundSettings.backgroundImage) {
+            try {
+                const bgImage = await loadImage(backgroundSettings.backgroundImage);
+                ctx.drawImage(bgImage, 0, 0, width, height);
+            } catch (imgError) {
+                console.warn('Failed to load background image, using fallback');
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, width, height);
+            }
+        } else {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, width, height);
+        }
+    } catch (error) {
+        console.error('Background application error:', error);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
     }
 };
 

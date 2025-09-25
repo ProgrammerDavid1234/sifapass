@@ -248,7 +248,7 @@ export const createCredential = async (req, res) => {
 
         // Upload to Cloudinary using buffer
         const uploadResult = await new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream(
+            const stream = cloudinary.v2.uploader.upload_stream(
                 { resource_type: "auto", folder: "credentials" },
                 (error, result) => {
                     if (error) return reject(error);
@@ -449,7 +449,7 @@ export const createCredentialWithDesign = async (req, res) => {
 
                 console.log('Uploading to Cloudinary with options:', uploadOptions);
 
-                const uploadStream = cloudinary.uploader.upload_stream(
+                const uploadStream = cloudinary.v2.uploader.upload_stream(
                     uploadOptions,
                     (error, result) => {
                         if (error) {
@@ -1021,7 +1021,7 @@ export const downloadCredentialDirect = async (req, res) => {
 
                 // Upload the generated image
                 const uploadResult = await new Promise((resolve, reject) => {
-                    cloudinary.uploader.upload_stream(
+                    cloudinary.v2.uploader.upload_stream(
                         {
                             resource_type: "image",
                             folder: "credentials/on-demand",
@@ -1541,7 +1541,7 @@ export const exportCredentialPDF = async (req, res) => {
 
         // Upload to Cloudinary
         const uploadResult = await new Promise((resolve, reject) => {
-            cloudinary.uploader.upload_stream(
+            cloudinary.v2.uploader.upload_stream(
                 { resource_type: "raw", folder: "credentials/exports", format: "pdf" },
                 (error, result) => {
                     if (error) return reject(error);
@@ -1643,7 +1643,7 @@ export const exportCredentialPNG = async (req, res) => {
 
         // Upload to Cloudinary
         const uploadResult = await new Promise((resolve, reject) => {
-            cloudinary.uploader.upload_stream(
+            cloudinary.v2.uploader.upload_stream(
                 {
                     resource_type: "image",
                     folder: "credentials/exports",
@@ -1712,7 +1712,7 @@ export const exportCredentialJPEG = async (req, res) => {
 
         // Upload to Cloudinary
         const uploadResult = await new Promise((resolve, reject) => {
-            cloudinary.uploader.upload_stream(
+            cloudinary.v2.uploader.upload_stream(
                 { resource_type: "image", folder: "credentials/exports", format: "jpg" },
                 (error, result) => {
                     if (error) return reject(error);
@@ -2491,7 +2491,7 @@ export const batchExportCredentials = async (req, res) => {
  */
 async function uploadToCloudinary(buffer, resourceType, format) {
     return new Promise((resolve, reject) => {
-        cloudinary.uploader.upload_stream(
+        cloudinary.v2.uploader.upload_stream(
             {
                 resource_type: resourceType,
                 folder: "credentials/exports",
@@ -2728,7 +2728,7 @@ export const downloadCredentialForParticipant = async (req, res) => {
 
         // Upload to Cloudinary
         const uploadResult = await new Promise((resolve, reject) => {
-            cloudinary.uploader.upload_stream(
+            cloudinary.v2.uploader.upload_stream(
                 {
                     resource_type: format === 'pdf' ? "raw" : "image",
                     folder: "credentials/participant-downloads",

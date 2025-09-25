@@ -527,7 +527,7 @@ const debugExportMiddleware = (req, res, next) => {
  *                 message:
  *                   type: string
  */
-router.post("/export/png", authenticate, exportCredentialPNG);
+router.post("/export/png", authenticateUser, exportCredentialPNG);
 
 /**
  * @swagger
@@ -902,7 +902,27 @@ router.get("/templates/public", async (req, res) => {
         });
     }
 });
-
+router.get("/test-cloudinary", async (req, res) => {
+    try {
+        const uploadResult = await cloudinary.v2.uploader.upload(
+            "https://res.cloudinary.com/demo/image/upload/sample.jpg",
+            {
+                folder: "test",
+            }
+        );
+        console.log("Upload result:", uploadResult.secure_url);
+        res.json({
+            success: true,
+            url: uploadResult.secure_url,
+        });
+    } catch (error) {
+        console.error("Cloudinary test error:", error);
+        res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
+});
 /**
  * @swagger
  * /api/credentials:

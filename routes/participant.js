@@ -10,7 +10,8 @@ import Event from "../models/Event.js";
 import { exportParticipants } from "../controllers/participantController.js";
 const router = express.Router();
 import { authenticateUser } from "../middleware/auth.js";
-
+import { downloadCredentialForParticipant } from "../controllers/credentialController.js";
+// In your routes file (e.g., participantRoutes.js)
 /**
  * @swagger
  * /api/participants/register:
@@ -1235,5 +1236,7 @@ router.post("/:participantId/events/:eventId/register", authenticateUser, async 
         res.status(500).json({ error: err.message });
     }
 });
+
+router.get('/credentials/:credentialId/download', authenticateUser, downloadCredentialForParticipant);
 
 export default router;

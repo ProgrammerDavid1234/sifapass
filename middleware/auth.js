@@ -95,3 +95,37 @@ export const authenticateUser = async (req, res, next) => {
     return res.status(401).json({ msg: "Invalid or expired token" });
   }
 };
+
+
+export const authenticateFlexible = async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) return res.status(401).json({ msg: 'No token provided' });
+
+    // Try participant
+    try {
+      const participantDecoded = jwt.verify(token, process.env.JWT_PARTICIPANT_SECRET || process.env.JWT_SECRET);
+      const participant = await Participant.findById(participantDecoded.id);
+      if (participant) {
+        req.user = participant;
+        req.userType = 'participant';
+        return next();
+      }
+    } catch {}
+
+    // Try admin
+    try {
+      const adminDecoded = jwt.verify(token, process.env.JWT_SECRET);
+      const admin = await Admin.findById(adminDecoded.id);
+      if (admin) {
+        req.user = admin;
+        req.userType = 'admin';
+        return next();
+      }
+    } catch {}
+
+    return res.status(401).json({ msg: 'Invalid token' });
+  } catch (error) {
+    return res.status(401).json({ msg: 'Authentication failed' });
+  }
+};

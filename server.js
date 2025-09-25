@@ -30,6 +30,8 @@ import apiKeyRoutes from "./routes/apiKeyRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 import publicApiRoutes from "./routes/publicApiRoutes.js";
 import zapierRoutes from "./routes/zapierRoutes.js";
+import testRoutes from "./routes/testRoutes.js";
+import { v2 as cloudinary } from "cloudinary";
 
 
 // Import new designer routes (comment this out if the file doesn't exist yet)
@@ -144,6 +146,17 @@ app.get("/health", (req, res) => {
     });
 });
 
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+console.log("Cloudinary config:", {
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY ? "loaded" : "missing",
+  api_secret: process.env.CLOUDINARY_API_SECRET ? "loaded" : "missing",
+});
 // MongoDB connection test endpoint
 app.get("/test-mongo", async (req, res) => {
     try {
@@ -525,6 +538,7 @@ app.use("/api/designer", designerLimiter, designerRoutes);
 app.use("/api/api-keys", apiKeyRoutes);
 app.use("/api/webhooks", webhookRoutes);
 app.use("/api/zapier", zapierRoutes);
+app.use("/api", testRoutes);
 
 
 // Public API routes (versioned)

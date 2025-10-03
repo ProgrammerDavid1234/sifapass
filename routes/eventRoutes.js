@@ -607,4 +607,28 @@ router.get("/:eventId/registration-link", authenticate, getRegistrationLink);
  *       scheme: bearer
  *       bearerFormat: JWT
  */
+
+// Add this to your event routes (not participant routes)
+router.post("/:eventId/participants/:participantId", authenticate, async (req, res) => {
+  const { eventId, participantId } = req.params;
+
+  const event = await Event.findById(eventId);
+  const participant = await Participant.findById(participantId);
+
+  if (!event || !participant) {
+    return res.status(404).json({ message: "Event or Participant not found" });
+  }
+
+  if (event.participants.includes(participantId)) {
+    return res.status(400).json({ message: "Already registered" });
+  }
+
+  event.participants.push(participantId);
+  await event.save();
+
+  participant.events.push(eventId);
+  await participant.save();
+
+  res.json({ message: "Participant added to event", participant });
+});
 export default router;

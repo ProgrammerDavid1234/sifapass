@@ -21,8 +21,10 @@ export const getBillingDashboard = async (req, res) => {
 
     console.log('   Admin found:', admin.email);
 
-    // Find organization by admin email
-    const organization = await Organization.findOne({ email: admin.email });
+    // CRITICAL FIX: Use lean() to bypass Mongoose cache and get fresh data
+    const organization = await Organization.findOne({ email: admin.email })
+      .lean() // This forces fresh data from MongoDB
+      .exec();
 
     if (!organization) {
       console.log('   No organization found for admin:', admin.email);
@@ -58,27 +60,26 @@ export const getBillingDashboard = async (req, res) => {
     }
 
     console.log('   Organization found:', organization.name);
+    console.log('   📊 RAW BILLING DATA FROM DB:', JSON.stringify(organization.billing, null, 2));
+    console.log('   💰 CREDITS FROM DB:', organization.billing?.credits);
 
-    // Ensure billing structure exists
-    if (!organization.billing) {
-      organization.billing = {
-        planType: 'pay-as-you-go',
-        credits: { available: 0, used: 0, creditRate: 5 },
-        subscription: { status: 'inactive' },
-        usage: {
-          currentMonth: { credentialsIssued: 0, eventsCreated: 0, participantsAdded: 0 },
-          lifetime: { credentialsIssued: 0, eventsCreated: 0, participantsAdded: 0 }
-        },
-        paystack: {}
-      };
-      await organization.save();
-    }
+    // Ensure billing structure exists with fallback values
+    const billing = organization.billing || {
+      planType: 'pay-as-you-go',
+      credits: { available: 0, used: 0, creditRate: 5 },
+      subscription: { status: 'inactive' },
+      usage: {
+        currentMonth: { credentialsIssued: 0, eventsCreated: 0, participantsAdded: 0 },
+        lifetime: { credentialsIssued: 0, eventsCreated: 0, participantsAdded: 0 }
+      },
+      paystack: {}
+    };
 
     // Get current plan details if subscription is active
     let currentPlanDetails = null;
-    if (organization.billing.currentPlan) {
+    if (billing.currentPlan) {
       try {
-        currentPlanDetails = await Plan.findById(organization.billing.currentPlan);
+        currentPlanDetails = await Plan.findById(billing.currentPlan).lean();
         console.log('   Current plan:', currentPlanDetails?.name);
       } catch (error) {
         console.warn('   Could not fetch plan details:', error.message);
@@ -86,7 +87,7 @@ export const getBillingDashboard = async (req, res) => {
     }
 
     // Get all available plans
-    const allPlans = await Plan.find({ isActive: true }).sort({ price: 1 });
+    const allPlans = await Plan.find({ isActive: true }).sort({ price: 1 }).lean();
     console.log(`   Found ${allPlans.length} active plans`);
 
     // Get recent invoices
@@ -99,7 +100,7 @@ export const getBillingDashboard = async (req, res) => {
 
     // Calculate usage percentages for subscription plans
     let usagePercentages = null;
-    if (organization.billing.planType === 'subscription' && currentPlanDetails) {
+    if (billing.planType === 'subscription' && currentPlanDetails) {
       const monthlyLimits = {
         credentials: currentPlanDetails.features?.credentialsPerMonth || 
                      currentPlanDetails.features?.maxParticipants || Infinity,
@@ -109,7 +110,7 @@ export const getBillingDashboard = async (req, res) => {
                       currentPlanDetails.features?.maxParticipants || Infinity
       };
 
-      const currentUsage = organization.billing.usage?.currentMonth || {
+      const currentUsage = billing.usage?.currentMonth || {
         credentialsIssued: 0,
         eventsCreated: 0,
         participantsAdded: 0
@@ -128,7 +129,16 @@ export const getBillingDashboard = async (req, res) => {
       };
     }
 
-    // Build comprehensive response
+    // Build comprehensive response with explicit credit values
+    const creditsAvailable = billing.credits?.available || 0;
+    const creditsUsed = billing.credits?.used || 0;
+    const creditRate = billing.credits?.creditRate || 5;
+
+    console.log('   💰 CREDITS TO RETURN:');
+    console.log('      Available:', creditsAvailable);
+    console.log('      Used:', creditsUsed);
+    console.log('      Rate:', creditRate);
+
     const dashboardData = {
       organization: {
         id: organization._id,
@@ -136,7 +146,7 @@ export const getBillingDashboard = async (req, res) => {
         email: organization.email
       },
       billing: {
-        planType: organization.billing.planType || 'none',
+        planType: billing.planType || 'none',
         currentPlan: currentPlanDetails ? {
           id: currentPlanDetails._id,
           name: currentPlanDetails.name,
@@ -145,35 +155,35 @@ export const getBillingDashboard = async (req, res) => {
           features: currentPlanDetails.features
         } : null,
         credits: {
-          available: organization.billing.credits?.available || 0,
-          used: organization.billing.credits?.used || 0,
-          creditRate: organization.billing.credits?.creditRate || 5
+          available: creditsAvailable,
+          used: creditsUsed,
+          creditRate: creditRate
         },
         subscription: {
-          status: organization.billing.subscription?.status || 'inactive',
-          startDate: organization.billing.subscription?.startDate || null,
-          endDate: organization.billing.subscription?.endDate || null,
-          nextBillingDate: organization.billing.nextBillingDate || null,
-          cancelAtPeriodEnd: organization.billing.subscription?.cancelAtPeriodEnd || false
+          status: billing.subscription?.status || 'inactive',
+          startDate: billing.subscription?.startDate || null,
+          endDate: billing.subscription?.endDate || null,
+          nextBillingDate: billing.nextBillingDate || null,
+          cancelAtPeriodEnd: billing.subscription?.cancelAtPeriodEnd || false
         },
         usage: {
-          currentMonth: organization.billing.usage?.currentMonth || {
+          currentMonth: billing.usage?.currentMonth || {
             credentialsIssued: 0,
             eventsCreated: 0,
             participantsAdded: 0
           },
-          lifetime: organization.billing.usage?.lifetime || {
+          lifetime: billing.usage?.lifetime || {
             credentialsIssued: 0,
             eventsCreated: 0,
             participantsAdded: 0
           },
           percentages: usagePercentages
         },
-        paymentMethod: organization.billing.paystack?.cardType ? {
+        paymentMethod: billing.paystack?.cardType ? {
           type: 'card',
-          cardType: organization.billing.paystack.cardType,
-          lastFourDigits: organization.billing.paystack.lastFourDigits,
-          bank: organization.billing.paystack.bank
+          cardType: billing.paystack.cardType,
+          lastFourDigits: billing.paystack.lastFourDigits,
+          bank: billing.paystack.bank
         } : null
       },
       plans: allPlans.map(plan => ({
@@ -186,7 +196,7 @@ export const getBillingDashboard = async (req, res) => {
         features: plan.features,
         isActive: plan.isActive,
         isPopular: plan.isPopular || false,
-        isCurrent: currentPlanDetails ? plan._id.equals(currentPlanDetails._id) : false
+        isCurrent: currentPlanDetails ? plan._id.toString() === currentPlanDetails._id.toString() : false
       })),
       invoices: recentInvoices.map(invoice => ({
         id: invoice._id,
@@ -204,8 +214,8 @@ export const getBillingDashboard = async (req, res) => {
         totalSpent: recentInvoices
           .filter(inv => inv.status === 'paid')
           .reduce((sum, inv) => sum + inv.totalAmount, 0),
-        activeSubscription: organization.billing.subscription?.status === 'active',
-        creditsRemaining: organization.billing.credits?.available || 0,
+        activeSubscription: billing.subscription?.status === 'active',
+        creditsRemaining: creditsAvailable,
         invoicesCount: {
           total: recentInvoices.length,
           paid: recentInvoices.filter(inv => inv.status === 'paid').length,
@@ -218,6 +228,7 @@ export const getBillingDashboard = async (req, res) => {
     };
 
     console.log('✅ Dashboard data compiled successfully');
+    console.log('   💰 FINAL CREDITS IN RESPONSE:', dashboardData.billing.credits);
 
     res.json({
       success: true,
@@ -236,7 +247,6 @@ export const getBillingDashboard = async (req, res) => {
     });
   }
 };
-
 export const getAllPlans = async (req, res) => {
   try {
     console.log('\n📋 Fetching all plans...');

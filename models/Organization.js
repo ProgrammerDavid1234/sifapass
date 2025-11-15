@@ -1,6 +1,33 @@
-// models/Organization.js - Enhanced with billing features
+// models/Organization.js
 import mongoose from "mongoose";
 
+// ---------------- Team Member Schema ----------------
+const teamMemberSchema = new mongoose.Schema({
+  name: { 
+    type: String, 
+    required: true 
+  },
+  email: { 
+    type: String, 
+    required: true
+  },
+  role: { 
+    type: String, 
+    enum: ["admin", "editor", "viewer"], 
+    default: "viewer" 
+  },
+  status: { 
+    type: String, 
+    enum: ["active", "inactive", "pending"], 
+    default: "active" 
+  },
+  addedAt: { 
+    type: Date, 
+    default: Date.now 
+  }
+});
+
+// ---------------- Organization Schema ----------------
 const organizationSchema = new mongoose.Schema({
 
   // Basic Info
@@ -10,9 +37,8 @@ const organizationSchema = new mongoose.Schema({
   password: { type: String, required: true },
   active: { type: Boolean, default: true },
 
-  // Billing Information
+  // Billing System
   billing: {
-    // Current subscription
     currentPlan: { 
       type: mongoose.Schema.Types.ObjectId, 
       ref: "Plan" 
@@ -24,14 +50,12 @@ const organizationSchema = new mongoose.Schema({
       default: 'subscription'
     },
 
-    // Pay-as-you-go credits
     credits: {
       available: { type: Number, default: 0 },
       used: { type: Number, default: 0 },
-      creditRate: { type: Number, default: 5 } // ₦5 per credential
+      creditRate: { type: Number, default: 5 }
     },
 
-    // Subscription info
     subscription: {
       status: { 
         type: String, 
@@ -44,7 +68,6 @@ const organizationSchema = new mongoose.Schema({
       cancelAtPeriodEnd: { type: Boolean, default: false }
     },
 
-    // Usage tracking
     usage: {
       currentMonth: {
         credentialsIssued: { type: Number, default: 0 },
@@ -58,7 +81,6 @@ const organizationSchema = new mongoose.Schema({
       }
     },
 
-    // Paystack customer info
     paystack: {
       customerId: String,
       subscriptionCode: String,
@@ -73,36 +95,19 @@ const organizationSchema = new mongoose.Schema({
     billingEmail: String
   },
 
-  // Team management
+  // Team
   maxUsers: { type: Number, default: 10 },
   roles: { type: [String], default: ["admin", "event_manager", "viewer"] },
 
-  teamMembers: [
-    {
-      name: { type: String, required: true },
-      email: { type: String, required: true },
-      role: { 
-        type: String, 
-        enum: ["admin", "editor", "viewer"], 
-        default: "viewer" 
-      },
-      status: { 
-        type: String, 
-        enum: ["active", "inactive", "pending"], 
-        default: "active" 
-      },
-      addedAt: { type: Date, default: Date.now }
-    }
-  ],
+  teamMembers: [teamMemberSchema]
 
-}, { 
-  timestamps: true,
-  autoIndex: false // VERY IMPORTANT to prevent old indexes from recreating
-});
+}, { timestamps: true, autoIndex: false });
 
 
-// Reset monthly usage on the first of each month
-organizationSchema.methods.resetMonthlyUsage = function() {
+// ---------------- Schema Methods ----------------
+
+// Reset monthly usage
+organizationSchema.methods.resetMonthlyUsage = function () {
   this.billing.usage.currentMonth = {
     credentialsIssued: 0,
     eventsCreated: 0,
@@ -111,9 +116,8 @@ organizationSchema.methods.resetMonthlyUsage = function() {
   return this.save();
 };
 
-
 // Check plan limits
-organizationSchema.methods.hasReachedLimit = async function(limitType) {
+organizationSchema.methods.hasReachedLimit = async function (limitType) {
   if (this.billing.planType === 'pay-as-you-go') {
     return this.billing.credits.available <= 0;
   }
@@ -128,7 +132,7 @@ organizationSchema.methods.hasReachedLimit = async function(limitType) {
       return usage.participantsAdded >= plan.features.maxParticipants;
 
     case 'events':
-      return plan.features.maxEventsPerMonth !== -1 && 
+      return plan.features.maxEventsPerMonth !== -1 &&
              usage.eventsCreated >= plan.features.maxEventsPerMonth;
 
     default:
@@ -136,9 +140,8 @@ organizationSchema.methods.hasReachedLimit = async function(limitType) {
   }
 };
 
-
 // Deduct credits
-organizationSchema.methods.deductCredits = function(amount = 1) {
+organizationSchema.methods.deductCredits = function (amount = 1) {
   if (this.billing.planType !== 'pay-as-you-go') {
     return { success: false, message: 'Not on pay-as-you-go plan' };
   }
@@ -156,5 +159,6 @@ organizationSchema.methods.deductCredits = function(amount = 1) {
 };
 
 
+// ---------------- Export Model ----------------
 export default mongoose.models.Organization ||
   mongoose.model("Organization", organizationSchema);

@@ -24,573 +24,28 @@ import {
     downloadCredentialDirect
 } from "../controllers/credentialController.js";
 import { trackCredentialUsage } from '../middleware/usageTracking.js';
+import { requireFeature, attachPlanInfo } from '../middleware/planAccess.js';
 
 const router = express.Router();
 import { authenticate, authenticateUser } from "../middleware/auth.js";
 import multer from "multer";
 import path from "path";
 import upload from "../middleware/upload.js";
-import {
-    trackCredentialIssued,
-    trackCredentialVerified,
-    trackCredentialDownloaded
-} from "../utils/analyticsHelper.js";
 
-
-
-/**
- * @swagger
- * /api/credentials/{id}/edit:
- *   put:
- *     summary: Edit a credential
- *     tags: [Admin]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         description: Credential ID
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             example:
- *               name: "Blockchain Certificate"
- *               issuer: "University X"
- *     responses:
- *       200:
- *         description: Credential updated successfully
- */
-router.put("/:id/edit", authenticate, editCredential);
-
-/**
- * @swagger
- * /api/credentials/{id}/share:
- *   post:
- *     summary: Share a credential with others
- *     tags: [Participants]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         description: Credential ID
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Credential shared successfully
- */
-router.post("/:id/share", authenticate, shareCredential);
-
-/**
- * @swagger
- * /api/credentials/import:
- *   post:
- *     summary: Import credentials from a file or external system
- *     tags: [Admin]
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             properties:
- *               file:
- *                 type: string
- *                 format: binary
- *     responses:
- *       201:
- *         description: Credentials imported successfully
- */
-router.post("/import", authenticate, importCredential);
-
-/**
- * @swagger
- * /api/credentials/template/default:
- *   get:
- *     summary: Get default credential template
- *     tags: [Admin]
- *     responses:
- *       200:
- *         description: Default template retrieved
- */
-router.get("/template/default", getDefaultTemplate);
-
-/**
- * @swagger
- * /api/credentials/{id}/customize:
- *   put:
- *     summary: Customize credential using editor
- *     tags: [Admin]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         description: Credential ID
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             example:
- *               color: "blue"
- *               font: "Roboto"
- *     responses:
- *       200:
- *         description: Credential customized successfully
- */
-router.put("/:id/customize", authenticate, customizeCredential);
-
-/**
- * @swagger
- * /api/credentials/{id}/verify:
- *   get:
- *     summary: Verify credential via blockchain or QR code
- *     tags: [Participants]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         description: Credential ID
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Credential is valid
- *       400:
- *         description: Credential is invalid
- */
-router.get("/:id/verify", verifyCredential);
-
-/**
- * @swagger
- * /api/credentials/reconcile:
- *   post:
- *     summary: Reconcile participant certificates
- *     tags: [Admin]
- */
-router.post("/reconcile", authenticate, reconcileCertificates);
+// ==================== CREDENTIAL CREATION (WITH PLAN CHECKS) ====================
 /**
  * @swagger
  * /api/credentials/create:
  *   post:
- *     summary: Create Participant Credential (Certificate or Badge)
+ *     summary: Create Participant Credential (deducts credits or checks limits)
  *     tags: [Admin]
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             required:
- *               - participantId
- *               - eventId
- *               - title
- *               - type
- *               - file
- *             properties:
- *               participantId:
- *                 type: string
- *               eventId:
- *                 type: string
- *               title:
- *                 type: string
- *               type:
- *                 type: string
- *                 enum: [certificate, badge]
- *               file:
- *                 type: string
- *                 format: binary
- *     responses:
- *       201:
- *         description: Credential created successfully
- *       400:
- *         description: Invalid input
- *       500:
- *         description: Failed to create credential
  */
-
-router.post("/create", authenticate, upload.single("file"), createCredential);
-
-/**
- * @swagger
- * /api/credentials/stats:
- *   get:
- *     summary: Get credential statistics
- *     tags: [Admin]
- *     responses:
- *       200:
- *         description: Returns credential statistics
- *       500:
- *         description: Server error    
- */
-router.get("/stats", authenticate, getCredentialStats);
-/**
- * @swagger
- * /api/credentials/my:
- *   get:
- *     summary: Get credentials for the logged-in participant
- *     tags: [Participants]
- *     responses:
- *       200:
- *         description: List of credentials for the participant
- *       401:
- *         description: Unauthorized
- *       500:
- *         description: Server error
- */
-router.get("/my", authenticateUser, getMyCredentials);
-
-
-/**
- * @swagger
- * /api/credentials/templates:
- *   post:
- *     summary: Create a new credential template with designer data
- *     tags: [Templates]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - name
- *               - type
- *               - designData
- *             properties:
- *               name:
- *                 type: string
- *                 example: "Modern Certificate Template"
- *               type:
- *                 type: string
- *                 enum: [certificate, badge]
- *               designData:
- *                 type: object
- *                 properties:
- *                   elements:
- *                     type: array
- *                   canvas:
- *                     type: object
- *                   background:
- *                     type: object
- *               backgroundSettings:
- *                 type: object
- *               contentSettings:
- *                 type: object
- *               verificationSettings:
- *                 type: object
- *     responses:
- *       201:
- *         description: Template created successfully
- */
-router.post("/templates", authenticate, createTemplate);
-
-/**
- * @swagger
- * /api/credentials/templates:
- *   get:
- *     summary: Get all templates (with optional type filter)
- *     tags: [Templates]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: query
- *         name: type
- *         schema:
- *           type: string
- *           enum: [certificate, badge]
- *         description: Filter by template type
- *     responses:
- *       200:
- *         description: List of templates retrieved successfully
- */
-router.get("/templates", authenticate, getTemplates);
-
-/**
- * @swagger
- * /api/credentials/templates/{id}:
- *   get:
- *     summary: Get single template by ID
- *     tags: [Templates]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: Template ID
- *     responses:
- *       200:
- *         description: Template retrieved successfully
- *       404:
- *         description: Template not found
- */
-router.get("/templates/:id", authenticate, getTemplate);
-
-/**
- * @swagger
- * /api/credentials/templates/{id}:
- *   put:
- *     summary: Update template
- *     tags: [Templates]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *     responses:
- *       200:
- *         description: Template updated successfully
- */
-router.put("/templates/:id", authenticate, updateTemplate);
-
-// ==================== DESIGNER FUNCTIONALITY ROUTES ====================
-
-/**
- * @swagger
- * /api/credentials/designer/save:
- *   post:
- *     summary: Save design progress (auto-save functionality)
- *     tags: [Designer]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               templateId:
- *                 type: string
- *                 description: Template ID to update (optional for new designs)
- *               designData:
- *                 type: object
- *                 description: Complete design data including elements, canvas, background
- *                 properties:
- *                   elements:
- *                     type: array
- *                     description: Array of design elements
- *                   canvas:
- *                     type: object
- *                     properties:
- *                       width:
- *                         type: number
- *                       height:
- *                         type: number
- *                   background:
- *                     type: object
- *                     properties:
- *                       type:
- *                         type: string
- *                         enum: [solid, gradient, image]
- *                       primaryColor:
- *                         type: string
- *                       secondaryColor:
- *                         type: string
- *     responses:
- *       200:
- *         description: Design saved successfully
- */
-router.post("/designer/save", authenticate, saveDesignProgress);
-
-/**
- * @swagger
- * /api/credentials/designer/preview:
- *   post:
- *     summary: Generate preview of credential design
- *     tags: [Designer]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - designData
- *             properties:
- *               designData:
- *                 type: object
- *                 description: Design configuration
- *               participantData:
- *                 type: object
- *                 description: Sample participant data for preview
- *                 properties:
- *                   name:
- *                     type: string
- *                     example: "John Doe"
- *                   eventTitle:
- *                     type: string
- *                     example: "Web Development Bootcamp"
- *                   eventDate:
- *                     type: string
- *                     example: "2024-01-15"
- *                   skills:
- *                     type: string
- *                     example: "JavaScript, React, Node.js"
- *     responses:
- *       200:
- *         description: Preview HTML generated successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 previewHtml:
- *                   type: string
- */
-router.post("/designer/preview", authenticate, previewCredential);
-
-// ==================== EXPORT FUNCTIONALITY ROUTES ====================
-// Add this middleware before your export routes to debug the issue
-
-const debugExportMiddleware = (req, res, next) => {
-    console.log(`Export request started: ${req.method} ${req.path}`);
-    console.log('Headers:', JSON.stringify(req.headers, null, 2));
-    console.log('Body keys:', Object.keys(req.body || {}));
-    console.log('User:', req.user ? req.user.id : 'No user');
-
-    // Set a longer timeout for export operations
-    req.setTimeout(120000); // 2 minutes
-    res.setTimeout(120000);
-
-    const originalSend = res.send;
-    res.send = function (data) {
-        console.log(`Export request completed: ${res.statusCode}`);
-        originalSend.call(this, data);
-    };
-
-    next();
-};
-
-/**
- * @swagger
- * /api/credentials/export/png:
- *   post:
- *     summary: Export credential as PNG image
- *     tags: [Export]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - designData
- *               - participantData
- *             properties:
- *               designData:
- *                 type: object
- *                 description: Complete design configuration
- *               participantData:
- *                 type: object
- *                 description: Participant information to populate the credential
- *               credentialId:
- *                 type: string
- *                 description: Optional credential ID to update with export link
- *     responses:
- *       200:
- *         description: PNG exported successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 exportUrl:
- *                   type: string
- *                 message:
- *                   type: string
- */
-router.post("/export/png", authenticateUser, exportCredentialPNG);
-
-/**
- * @swagger
- * /api/credentials/export/jpeg:
- *   post:
- *     summary: Export credential as JPEG image
- *     tags: [Export]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - designData
- *               - participantData
- *             properties:
- *               designData:
- *                 type: object
- *               participantData:
- *                 type: object
- *               credentialId:
- *                 type: string
- *     responses:
- *       200:
- *         description: JPEG exported successfully
- */
-router.post("/export/jpeg", authenticate, exportCredentialJPEG);
-
-/**
- * @swagger
- * /api/credentials/export/pdf:
- *   post:
- *     summary: Export credential as PDF document
- *     tags: [Export]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - designData
- *               - participantData
- *             properties:
- *               designData:
- *                 type: object
- *               participantData:
- *                 type: object
- *               credentialId:
- *                 type: string
- *     responses:
- *       200:
- *         description: PDF exported successfully
- */
-router.post("/export/pdf", authenticate, exportCredentialPDF);
-
-// ==================== ENHANCED CREATION ROUTES ====================
+router.post("/create", 
+  authenticate, 
+  trackCredentialUsage,  // ← Deducts credit or checks subscription limit
+  upload.single("file"), 
+  createCredential
+);
 
 /**
  * @swagger
@@ -598,102 +53,25 @@ router.post("/export/pdf", authenticate, exportCredentialPDF);
  *   post:
  *     summary: Create credential with custom design
  *     tags: [Credentials]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - participantId
- *               - eventId
- *               - title
- *               - type
- *             properties:
- *               participantId:
- *                 type: string
- *                 description: ID of the participant
- *               eventId:
- *                 type: string
- *                 description: ID of the event
- *               title:
- *                 type: string
- *                 example: "Certificate of Completion"
- *               type:
- *                 type: string
- *                 enum: [certificate, badge]
- *               templateId:
- *                 type: string
- *                 description: Optional template ID to use
- *               designData:
- *                 type: object
- *                 description: Custom design data (overrides template)
- *               participantData:
- *                 type: object
- *                 description: Participant-specific data for the credential
- *                 properties:
- *                   name:
- *                     type: string
- *                   eventTitle:
- *                     type: string
- *                   eventDate:
- *                     type: string
- *                   skills:
- *                     type: string
- *                   customFields:
- *                     type: object
- *     responses:
- *       201:
- *         description: Credential created successfully with design
- *       400:
- *         description: Invalid input data
  */
-router.post("/create-with-design", authenticate, createCredentialWithDesign);
+router.post("/create-with-design", 
+  authenticate, 
+  trackCredentialUsage,  // ← Deducts credit or checks subscription limit
+  createCredentialWithDesign
+);
 
-// ==================== BATCH OPERATIONS ====================
-
+// ==================== BULK OPERATIONS (STANDARD+ ONLY) ====================
 /**
  * @swagger
  * /api/credentials/batch/create:
  *   post:
- *     summary: Create multiple credentials at once
+ *     summary: Create multiple credentials at once (Standard plan or higher)
  *     tags: [Batch Operations]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - eventId
- *               - templateId
- *               - participants
- *             properties:
- *               eventId:
- *                 type: string
- *               templateId:
- *                 type: string
- *               type:
- *                 type: string
- *                 enum: [certificate, badge]
- *               participants:
- *                 type: array
- *                 items:
- *                   type: object
- *                   properties:
- *                     participantId:
- *                       type: string
- *                     participantData:
- *                       type: object
- *     responses:
- *       201:
- *         description: Batch credentials created successfully
  */
-router.post("/batch/create", authenticate, async (req, res) => {
+router.post("/batch/create", 
+  authenticate, 
+  requireFeature('bulkGeneration'),  // ← Only Standard+ plans
+  async (req, res) => {
     try {
         const { eventId, templateId, type = 'certificate', participants } = req.body;
 
@@ -715,8 +93,6 @@ router.post("/batch/create", authenticate, async (req, res) => {
                     participantData: participant.participantData || {}
                 };
 
-                // You would call createCredentialWithDesign here
-                // For now, we'll use a simplified approach
                 const credential = await createCredentialWithDesign({ body: credentialData });
                 results.push(credential);
             } catch (error) {
@@ -745,30 +121,13 @@ router.post("/batch/create", authenticate, async (req, res) => {
  * @swagger
  * /api/credentials/batch/export:
  *   post:
- *     summary: Export multiple credentials at once
+ *     summary: Export multiple credentials at once (Standard plan or higher)
  *     tags: [Batch Operations]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               credentialIds:
- *                 type: array
- *                 items:
- *                   type: string
- *               format:
- *                 type: string
- *                 enum: [png, jpeg, pdf]
- *                 default: pdf
- *     responses:
- *       200:
- *         description: Batch export completed
  */
-router.post("/batch/export", authenticate, async (req, res) => {
+router.post("/batch/export", 
+  authenticate, 
+  requireFeature('bulkGeneration'),  // ← Only Standard+ plans
+  async (req, res) => {
     try {
         const { credentialIds, format = 'pdf' } = req.body;
 
@@ -781,7 +140,6 @@ router.post("/batch/export", authenticate, async (req, res) => {
 
         for (const credentialId of credentialIds) {
             try {
-                // Fetch credential data
                 const credential = await Credential.findById(credentialId)
                     .populate('participantId', 'name email')
                     .populate('eventId', 'title');
@@ -791,29 +149,6 @@ router.post("/batch/export", authenticate, async (req, res) => {
                     continue;
                 }
 
-                // Export based on format
-                let exportFunction;
-                switch (format) {
-                    case 'png':
-                        exportFunction = exportCredentialPNG;
-                        break;
-                    case 'jpeg':
-                        exportFunction = exportCredentialJPEG;
-                        break;
-                    case 'pdf':
-                        exportFunction = exportCredentialPDF;
-                        break;
-                    default:
-                        throw new Error('Invalid export format');
-                }
-
-                const exportData = {
-                    designData: credential.designData,
-                    participantData: credential.participantData,
-                    credentialId: credential._id
-                };
-
-                // Mock export result
                 results.push({
                     credentialId,
                     exportUrl: `https://example.com/exports/${credentialId}.${format}`,
@@ -842,24 +177,62 @@ router.post("/batch/export", authenticate, async (req, res) => {
         });
     }
 });
-router.post(
-  '/create', 
+
+// ==================== IMPORT (STANDARD+ ONLY) ====================
+/**
+ * @swagger
+ * /api/credentials/import:
+ *   post:
+ *     summary: Import credentials from a file (Standard plan or higher)
+ *     tags: [Admin]
+ */
+router.post("/import", 
   authenticate, 
-  trackCredentialUsage,  // ← Add this
-  createCredentialWithDesign
+  requireFeature('bulkGeneration'),  // ← Only Standard+ plans
+  importCredential
 );
-// ==================== TEMPLATE SHARING AND MARKETPLACE ====================
+
+// ==================== TEMPLATES (FILTERED BY PLAN) ====================
+/**
+ * @swagger
+ * /api/credentials/templates:
+ *   get:
+ *     summary: Get all templates (filtered by plan tier)
+ *     tags: [Templates]
+ */
+router.get("/templates", 
+  authenticate, 
+  attachPlanInfo,  // ← Attach plan info for filtering
+  getTemplates
+);
+
+/**
+ * @swagger
+ * /api/credentials/templates:
+ *   post:
+ *     summary: Create a new credential template
+ *     tags: [Templates]
+ */
+router.post("/templates", 
+  authenticate, 
+  requireFeature('customTemplates'),  // ← Only Standard+ can create custom templates
+  createTemplate
+);
+
+router.get("/templates/:id", authenticate, getTemplate);
+router.put("/templates/:id", authenticate, updateTemplate);
 
 /**
  * @swagger
  * /api/credentials/templates/{id}/duplicate:
  *   post:
- *     summary: Duplicate an existing template
+ *     summary: Duplicate an existing template (Standard+ only)
  *     tags: [Templates]
- *     security:
- *       - bearerAuth: []
  */
-router.post("/templates/:id/duplicate", authenticate, async (req, res) => {
+router.post("/templates/:id/duplicate", 
+  authenticate, 
+  requireFeature('customTemplates'),  // ← Only Standard+ plans
+  async (req, res) => {
     try {
         const { id } = req.params;
         const { name } = req.body;
@@ -885,13 +258,6 @@ router.post("/templates/:id/duplicate", authenticate, async (req, res) => {
     }
 });
 
-/**
- * @swagger
- * /api/credentials/templates/public:
- *   get:
- *     summary: Get public templates available for everyone
- *     tags: [Templates]
- */
 router.get("/templates/public", async (req, res) => {
     try {
         const { type } = req.query;
@@ -908,79 +274,67 @@ router.get("/templates/public", async (req, res) => {
         });
     }
 });
+
+// ==================== DESIGNER & CUSTOMIZATION ====================
+router.post("/designer/save", authenticate, saveDesignProgress);
+router.post("/designer/preview", authenticate, previewCredential);
+router.get("/template/default", getDefaultTemplate);
+
+/**
+ * @swagger
+ * /api/credentials/{id}/customize:
+ *   put:
+ *     summary: Customize credential (Professional plan for advanced branding)
+ *     tags: [Admin]
+ */
+router.put("/:id/customize", 
+  authenticate, 
+  // Note: Basic customization allowed for all, but custom branding checked in controller
+  customizeCredential
+);
+
+// ==================== EXPORT FUNCTIONS ====================
+const debugExportMiddleware = (req, res, next) => {
+    console.log(`Export request started: ${req.method} ${req.path}`);
+    req.setTimeout(120000);
+    res.setTimeout(120000);
+    next();
+};
+
+router.post("/export/png", authenticateUser, exportCredentialPNG);
+router.post("/export/jpeg", authenticate, exportCredentialJPEG);
+router.post("/export/pdf", authenticate, exportCredentialPDF);
+
+// ==================== BASIC CREDENTIAL OPERATIONS ====================
+router.put("/:id/edit", authenticate, editCredential);
+router.post("/:id/share", authenticate, shareCredential);
+router.get("/:id/verify", verifyCredential);
+router.post("/reconcile", authenticate, reconcileCertificates);
+router.get("/stats", authenticate, getCredentialStats);
+router.get("/my", authenticateUser, getMyCredentials);
+router.get("/", authenticate, getAdminCredentialsViaEvents);
+
+router.get('/participants/:participantId/credentials/:credentialId/download',
+    authenticate,
+    downloadCredentialDirect
+);
+
 router.get("/test-cloudinary", async (req, res) => {
     try {
         const uploadResult = await cloudinary.v2.uploader.upload(
             "https://res.cloudinary.com/demo/image/upload/sample.jpg",
-            {
-                folder: "test",
-            }
+            { folder: "test" }
         );
-        console.log("Upload result:", uploadResult.secure_url);
         res.json({
             success: true,
             url: uploadResult.secure_url,
         });
     } catch (error) {
-        console.error("Cloudinary test error:", error);
         res.status(500).json({
             success: false,
             message: error.message,
         });
     }
 });
-/**
- * @swagger
- * /api/credentials:
- *   get:
- *     summary: Get all credentials created by the authenticated admin
- *     tags: [Admin]
- *     parameters:
- *       - in: query
- *         name: type
- *         schema:
- *           type: string
- *           enum: [certificate, badge]
- *         description: Filter by credential type
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 50
- *         description: Limit number of results
- *       - in: query
- *         name: offset
- *         schema:
- *           type: integer
- *           default: 0
- *         description: Offset for pagination
- *     responses:
- *       200:
- *         description: List of credentials retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 credentials:
- *                   type: array
- *                   items:
- *                     type: object
- *                 total:
- *                   type: integer
- *       401:
- *         description: Unauthorized
- *       500:
- *         description: Server error
- */
-router.get("/", authenticate, getAdminCredentialsViaEvents);
-// In your routes file
-router.get('/participants/:participantId/credentials/:credentialId/download',
-    authenticate,
-    downloadCredentialDirect
-);
 
 export default router;
-

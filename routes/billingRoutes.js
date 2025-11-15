@@ -1,4 +1,3 @@
-// routes/billingRoutes.js - COMPLETE WITH ALL FEATURES
 import express from 'express';
 import axios from 'axios';
 import {
@@ -15,12 +14,12 @@ import {
   verifyPayment,
   handleWebhook
 } from '../controllers/paystackController.js';
-
 import { authenticate } from '../middleware/auth.js';
+import { getPlanFeatures } from '../middleware/planAccess.js';
 
 const router = express.Router();
 
-// Test route - basic connectivity
+// ==================== TEST ROUTES ====================
 router.get('/test', (req, res) => {
   res.json({ 
     success: true, 
@@ -29,7 +28,6 @@ router.get('/test', (req, res) => {
   });
 });
 
-// Diagnostic route - check Paystack configuration
 router.get('/test-paystack', async (req, res) => {
   try {
     const secretKey = process.env.PAYSTACK_SECRET_KEY;
@@ -50,7 +48,6 @@ router.get('/test-paystack', async (req, res) => {
       });
     }
 
-    // Test actual Paystack API call
     const response = await axios.get('https://api.paystack.co/transaction', {
       headers: {
         Authorization: `Bearer ${secretKey}`,
@@ -87,7 +84,6 @@ router.get('/test-paystack', async (req, res) => {
   }
 });
 
-// Debug route - check payment status on Paystack directly
 router.get('/debug-payment/:reference', authenticate, async (req, res) => {
   try {
     const { reference } = req.params;
@@ -139,17 +135,51 @@ router.get('/debug-payment/:reference', authenticate, async (req, res) => {
   }
 });
 
-// Billing dashboard routes
+// ==================== PLAN FEATURES ENDPOINT (NEW!) ====================
+/**
+ * @swagger
+ * /api/billing/plan-features:
+ *   get:
+ *     summary: Get current user's plan and available features
+ *     description: Returns user's current plan, available features, and usage limits
+ *     tags: [Billing]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Plan features retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     currentPlan:
+ *                       type: string
+ *                     features:
+ *                       type: object
+ *                     usage:
+ *                       type: object
+ *                     limits:
+ *                       type: object
+ */
+router.get('/plan-features', authenticate, getPlanFeatures);
+
+// ==================== BILLING DASHBOARD ROUTES ====================
 router.get('/dashboard', authenticate, getBillingDashboard);
 router.get('/plans', getAllPlans);
 
-// Additional billing management routes
+// ==================== BILLING MANAGEMENT ROUTES ====================
 router.post('/switch-plan', authenticate, switchPlan);
 router.post('/cancel-subscription', authenticate, cancelSubscription);
 router.get('/invoices', authenticate, getInvoiceHistory);
 router.get('/usage', authenticate, getUsageStats);
 
-// Manual activation route (for fixing stuck payments)
+// ==================== MANUAL ACTIVATION (ADMIN FIX) ====================
 router.post('/activate-paid-subscription', authenticate, async (req, res) => {
   try {
     const { invoiceId } = req.body;
@@ -186,7 +216,6 @@ router.post('/activate-paid-subscription', authenticate, async (req, res) => {
       });
     }
 
-    // Ensure billing structure exists
     if (!organization.billing) {
       organization.billing = {
         credits: { available: 0, used: 0, creditRate: 5 },
@@ -199,7 +228,6 @@ router.post('/activate-paid-subscription', authenticate, async (req, res) => {
       };
     }
 
-    // Activate subscription
     organization.billing.currentPlan = invoice.plan;
     organization.billing.planType = 'subscription';
     organization.billing.subscription = {
@@ -210,7 +238,6 @@ router.post('/activate-paid-subscription', authenticate, async (req, res) => {
     organization.billing.lastBillingDate = invoice.paidDate || new Date();
     organization.billing.nextBillingDate = organization.billing.subscription.endDate;
 
-    // Update Paystack details
     if (invoice.paystack) {
       if (!organization.billing.paystack) organization.billing.paystack = {};
       organization.billing.paystack.cardType = invoice.paystack.cardType;
@@ -246,12 +273,12 @@ router.post('/activate-paid-subscription', authenticate, async (req, res) => {
   }
 });
 
-// Payment routes
+// ==================== PAYMENT ROUTES ====================
 router.post('/payment/subscription/initialize', authenticate, initializeSubscription);
 router.post('/payment/credits/initialize', authenticate, initializeCreditPurchase);
 router.get('/payment/verify', verifyPayment);
 
-// Webhook route (no authentication needed - validated by signature)
+// ==================== WEBHOOK ROUTE ====================
 router.post('/webhook/paystack', handleWebhook);
 
 export default router;

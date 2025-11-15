@@ -156,7 +156,6 @@ const adminSchema = new mongoose.Schema({
 adminSchema.index({ email: 1 });
 adminSchema.index({ verificationToken: 1 });
 adminSchema.index({ resetPasswordToken: 1 });
-adminSchema.index({ organization: 1 });
 adminSchema.index({ isVerified: 1, isActive: 1 });
 
 // Virtual for full profile completion percentage

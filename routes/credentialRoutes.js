@@ -23,6 +23,7 @@ import {
     getAdminCredentialsViaEvents,
     downloadCredentialDirect
 } from "../controllers/credentialController.js";
+import { trackCredentialUsage } from '../middleware/usageTracking.js';
 
 const router = express.Router();
 import { authenticate, authenticateUser } from "../middleware/auth.js";
@@ -841,7 +842,12 @@ router.post("/batch/export", authenticate, async (req, res) => {
         });
     }
 });
-
+router.post(
+  '/create', 
+  authenticate, 
+  trackCredentialUsage,  // ← Add this
+  createCredentialWithDesign
+);
 // ==================== TEMPLATE SHARING AND MARKETPLACE ====================
 
 /**

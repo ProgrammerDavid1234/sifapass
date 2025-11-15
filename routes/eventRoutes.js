@@ -13,6 +13,8 @@ import {
   getRegistrationLink,
 } from "../controllers/eventController.js";
 import { authenticate, authenticateAdminOrParticipant, authenticateUser } from "../middleware/auth.js";
+import { trackEventUsage } from '../middleware/usageTracking.js';
+
 const router = express.Router();
 
 
@@ -209,7 +211,12 @@ router.post("/:eventId/share", authenticate, shareEvent);
  *         description: Server error
  */
 router.get("/my-events", authenticate, getAdminEvents);
-
+router.post(
+  '/create', 
+  authenticate, 
+  trackEventUsage,  // ← Add this
+  createEvent
+);
 /**
  * @swagger
  * /api/events/{id}:

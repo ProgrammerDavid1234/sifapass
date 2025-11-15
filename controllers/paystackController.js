@@ -367,6 +367,30 @@ export const verifyPayment = async (req, res) => {
       });
     }
 
+    // Check if already processed
+    if (invoice.status === 'paid') {
+      console.log('⚠️ Invoice already processed:', invoice.invoiceNumber);
+      const organization = await Organization.findById(invoice.organization);
+      return res.json({
+        success: true,
+        message: 'Payment already processed',
+        data: {
+          invoice: {
+            id: invoice._id,
+            invoiceNumber: invoice.invoiceNumber,
+            amount: invoice.totalAmount,
+            status: invoice.status,
+            paidDate: invoice.paidDate,
+            type: invoice.type
+          },
+          organization: {
+            planType: organization.billing.planType,
+            credits: organization.billing.credits
+          }
+        }
+      });
+    }
+
     // Update invoice
     invoice.status = 'paid';
     invoice.paidDate = new Date();
@@ -385,7 +409,7 @@ export const verifyPayment = async (req, res) => {
     await invoice.save();
     console.log('✅ Invoice updated:', invoice.invoiceNumber);
 
-    // Update organization
+    // Update organization - CRITICAL FIX HERE
     const organization = await Organization.findById(invoice.organization);
     
     if (!organization) {
@@ -395,31 +419,50 @@ export const verifyPayment = async (req, res) => {
       });
     }
 
-    // Ensure billing object exists with proper structure
+    console.log('📊 Current billing state:', JSON.stringify(organization.billing, null, 2));
+
+    // Initialize billing structure if it doesn't exist
     if (!organization.billing) {
-      organization.billing = {
-        planType: 'pay-as-you-go',
-        credits: { available: 0, used: 0, creditRate: 5 },
-        subscription: { status: 'inactive' },
-        usage: {
-          currentMonth: { credentialsIssued: 0, eventsCreated: 0, participantsAdded: 0 },
-          lifetime: { credentialsIssued: 0, eventsCreated: 0, participantsAdded: 0 }
-        },
-        paystack: {}
+      organization.billing = {};
+    }
+
+    // Initialize all nested objects with proper defaults
+    if (!organization.billing.credits) {
+      organization.billing.credits = {
+        available: 0,
+        used: 0,
+        creditRate: 5
       };
     }
 
-    // Ensure nested objects exist
     if (!organization.billing.subscription) {
-      organization.billing.subscription = { status: 'inactive' };
+      organization.billing.subscription = {
+        status: 'inactive',
+        autoRenew: true,
+        cancelAtPeriodEnd: false
+      };
     }
-    if (!organization.billing.credits) {
-      organization.billing.credits = { available: 0, used: 0, creditRate: 5 };
+
+    if (!organization.billing.usage) {
+      organization.billing.usage = {
+        currentMonth: {
+          credentialsIssued: 0,
+          eventsCreated: 0,
+          participantsAdded: 0
+        },
+        lifetime: {
+          credentialsIssued: 0,
+          eventsCreated: 0,
+          participantsAdded: 0
+        }
+      };
     }
+
     if (!organization.billing.paystack) {
       organization.billing.paystack = {};
     }
 
+    // Process based on invoice type
     if (invoice.type === 'subscription') {
       console.log('💼 Processing subscription payment...');
       
@@ -442,15 +485,39 @@ export const verifyPayment = async (req, res) => {
       
     } else if (invoice.type === 'credit_purchase') {
       console.log('💎 Processing credit purchase...');
+      console.log('📋 Invoice credits:', invoice.credits);
+      console.log('💰 Current available credits:', organization.billing.credits.available);
       
-      organization.billing.credits.available += invoice.credits.totalCredits;
+      // CRITICAL: Ensure credits object exists and has numeric values
+      const currentAvailable = organization.billing.credits.available || 0;
+      const creditsToAdd = invoice.credits.totalCredits || 0;
+      
+      // Add credits - explicit addition
+      organization.billing.credits.available = currentAvailable + creditsToAdd;
       organization.billing.planType = 'pay-as-you-go';
       
-      console.log(`✅ Added ${invoice.credits.totalCredits} credits`);
+      console.log(`✅ Added ${creditsToAdd} credits`);
+      console.log(`💰 New total: ${organization.billing.credits.available} credits`);
     }
 
-    await organization.save();
-    console.log('✅ Organization billing updated');
+    // Mark the billing path as modified to ensure Mongoose saves it
+    organization.markModified('billing');
+    organization.markModified('billing.credits');
+    organization.markModified('billing.subscription');
+    
+    // Save with error handling
+    try {
+      await organization.save();
+      console.log('✅ Organization billing updated and saved');
+      console.log('📊 Final billing state:', JSON.stringify(organization.billing, null, 2));
+    } catch (saveError) {
+      console.error('❌ Failed to save organization:', saveError);
+      throw new Error(`Database save failed: ${saveError.message}`);
+    }
+
+    // Verify the save by re-fetching
+    const verifyOrg = await Organization.findById(invoice.organization);
+    console.log('🔍 Verification - Credits after save:', verifyOrg.billing.credits.available);
 
     console.log('✅ Payment verified and processed successfully');
 
@@ -502,7 +569,6 @@ export const verifyPayment = async (req, res) => {
     });
   }
 };
-
 export const handleWebhook = async (req, res) => {
   try {
     // CRITICAL: Get fresh key from process.env

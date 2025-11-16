@@ -26,8 +26,8 @@ const router = express.Router();
  *     summary: Create a new event (plan-limited)
  *     tags: [Admin]
  */
-router.post("/", 
-  authenticate, 
+router.post("/",
+  authenticate,
   checkEventLimit,      // ← Check if user can create more events based on plan
   trackEventUsage,      // ← Track the usage after check passes
   createEvent
@@ -54,6 +54,14 @@ router.get("/", getAllEvents);
  *     tags: [Participants]
  */
 router.get("/:id", getEventById);
+/**
+ * @swagger
+ * /api/events/{id}:
+ *   put:
+ *     summary: Update an existing event
+ *     tags: [Admin]
+ */
+router.put("/:id", authenticate, updateEvent);
 
 // ==================== ADMIN EVENT MANAGEMENT ====================
 /**
@@ -65,14 +73,6 @@ router.get("/:id", getEventById);
  */
 router.get("/my-events", authenticate, getAdminEvents);
 
-/**
- * @swagger
- * /api/events/{id}:
- *   put:
- *     summary: Update an existing event
- *     tags: [Admin]
- */
-router.put("/:id", authenticate, updateEvent);
 
 /**
  * @swagger

@@ -65,11 +65,11 @@ const paystackRequest = async (endpoint, method = 'GET', data = null) => {
       message: error.response?.data?.message || error.message,
       fullError: error.response?.data
     });
-    
+
     if (error.response?.status === 401) {
       throw new Error('Invalid Paystack API key - 401 Unauthorized');
     }
-    
+
     throw new Error(error.response?.data?.message || error.message || 'Paystack request failed');
   }
 };
@@ -94,25 +94,25 @@ export const initializeSubscription = async (req, res) => {
 
     const admin = await Admin.findById(req.user.id);
     if (!admin) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Admin not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Admin not found'
       });
     }
 
     const organization = await Organization.findOne({ email: admin.email });
     if (!organization) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Organization not found for this admin' 
+      return res.status(404).json({
+        success: false,
+        message: 'Organization not found for this admin'
       });
     }
 
     const plan = await Plan.findById(planId);
     if (!plan) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Plan not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Plan not found'
       });
     }
 
@@ -158,8 +158,8 @@ export const initializeSubscription = async (req, res) => {
 
     // Initialize payment
     const paystackResponse = await paystackRequest(
-      '/transaction/initialize', 
-      'POST', 
+      '/transaction/initialize',
+      'POST',
       paystackData
     );
 
@@ -194,7 +194,7 @@ export const initializeSubscription = async (req, res) => {
   } catch (error) {
     console.error('❌ Initialize Subscription Error:', error.message);
     console.error('   Stack:', error.stack);
-    
+
     res.status(500).json({
       success: false,
       message: 'Failed to initialize subscription payment',
@@ -217,9 +217,9 @@ export const initializeCreditPurchase = async (req, res) => {
 
     const admin = await Admin.findById(req.user.id);
     if (!admin) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Admin not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Admin not found'
       });
     }
 
@@ -254,7 +254,7 @@ export const initializeCreditPurchase = async (req, res) => {
     // Create invoice
     const invoiceNumber = await generateInvoiceNumber();
     const reference = `CREDIT_${Date.now()}_${organization._id}`;
-    
+
     const invoice = await Invoice.create({
       invoiceNumber,
       organization: organization._id,
@@ -293,8 +293,8 @@ export const initializeCreditPurchase = async (req, res) => {
     console.log('💳 Initializing credit purchase payment...');
 
     const paystackResponse = await paystackRequest(
-      '/transaction/initialize', 
-      'POST', 
+      '/transaction/initialize',
+      'POST',
       paystackData
     );
 
@@ -325,7 +325,7 @@ export const initializeCreditPurchase = async (req, res) => {
 
   } catch (error) {
     console.error('❌ Initialize Credit Purchase Error:', error.message);
-    
+
     res.status(500).json({
       success: false,
       message: 'Failed to initialize credit purchase',
@@ -336,12 +336,12 @@ export const initializeCreditPurchase = async (req, res) => {
 
 export const verifyPayment = async (req, res) => {
   try {
-    const { reference } = req.query;
-
+    // Accept both 'reference' and 'trxref' (Paystack sends both)
+    const reference = req.query.reference || req.query.trxref;
     if (!reference) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Payment reference is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Payment reference is required'
       });
     }
 
@@ -361,9 +361,9 @@ export const verifyPayment = async (req, res) => {
 
     const invoice = await Invoice.findOne({ 'paystack.reference': reference });
     if (!invoice) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Invoice not found for this payment reference' 
+      return res.status(404).json({
+        success: false,
+        message: 'Invoice not found for this payment reference'
       });
     }
 
@@ -411,7 +411,7 @@ export const verifyPayment = async (req, res) => {
 
     // Update organization - CRITICAL FIX HERE
     const organization = await Organization.findById(invoice.organization);
-    
+
     if (!organization) {
       return res.status(404).json({
         success: false,
@@ -465,7 +465,7 @@ export const verifyPayment = async (req, res) => {
     // Process based on invoice type
     if (invoice.type === 'subscription') {
       console.log('💼 Processing subscription payment...');
-      
+
       organization.billing.currentPlan = invoice.plan;
       organization.billing.planType = 'subscription';
       organization.billing.subscription.status = 'active';
@@ -480,22 +480,22 @@ export const verifyPayment = async (req, res) => {
         organization.billing.paystack.cardType = transactionData.authorization.card_type;
         organization.billing.paystack.bank = transactionData.authorization.bank;
       }
-      
+
       console.log('✅ Subscription activated');
-      
+
     } else if (invoice.type === 'credit_purchase') {
       console.log('💎 Processing credit purchase...');
       console.log('📋 Invoice credits:', invoice.credits);
       console.log('💰 Current available credits:', organization.billing.credits.available);
-      
+
       // CRITICAL: Ensure credits object exists and has numeric values
       const currentAvailable = organization.billing.credits.available || 0;
       const creditsToAdd = invoice.credits.totalCredits || 0;
-      
+
       // Add credits - explicit addition
       organization.billing.credits.available = currentAvailable + creditsToAdd;
       organization.billing.planType = 'pay-as-you-go';
-      
+
       console.log(`✅ Added ${creditsToAdd} credits`);
       console.log(`💰 New total: ${organization.billing.credits.available} credits`);
     }
@@ -504,7 +504,7 @@ export const verifyPayment = async (req, res) => {
     organization.markModified('billing');
     organization.markModified('billing.credits');
     organization.markModified('billing.subscription');
-    
+
     // Save with error handling
     try {
       await organization.save();
@@ -561,7 +561,7 @@ export const verifyPayment = async (req, res) => {
   } catch (error) {
     console.error('❌ Verify Payment Error:', error.message);
     console.error('   Stack:', error.stack);
-    
+
     res.status(500).json({
       success: false,
       message: 'Failed to verify payment',
@@ -573,7 +573,7 @@ export const handleWebhook = async (req, res) => {
   try {
     // CRITICAL: Get fresh key from process.env
     const PAYSTACK_SECRET_KEY = getPaystackSecretKey();
-    
+
     const hash = crypto
       .createHmac('sha512', PAYSTACK_SECRET_KEY)
       .update(JSON.stringify(req.body))
@@ -581,9 +581,9 @@ export const handleWebhook = async (req, res) => {
 
     if (hash !== req.headers['x-paystack-signature']) {
       console.error('❌ Invalid webhook signature');
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Invalid signature' 
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid signature'
       });
     }
 
@@ -609,9 +609,9 @@ export const handleWebhook = async (req, res) => {
 
   } catch (error) {
     console.error('❌ Webhook Error:', error.message);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 };

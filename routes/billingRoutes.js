@@ -1,3 +1,4 @@
+// routes/billingRoutes.js - COMPLETE MERGED VERSION
 import express from 'express';
 import axios from 'axios';
 import {
@@ -16,6 +17,8 @@ import {
 } from '../controllers/paystackController.js';
 import { authenticate } from '../middleware/auth.js';
 import { getPlanFeatures } from '../middleware/planAccess.js';
+import Invoice from '../models/Invoice.js';
+import Organization from '../models/Organization.js';
 
 const router = express.Router();
 
@@ -135,38 +138,7 @@ router.get('/debug-payment/:reference', authenticate, async (req, res) => {
   }
 });
 
-// ==================== PLAN FEATURES ENDPOINT (NEW!) ====================
-/**
- * @swagger
- * /api/billing/plan-features:
- *   get:
- *     summary: Get current user's plan and available features
- *     description: Returns user's current plan, available features, and usage limits
- *     tags: [Billing]
- *     security:
- *       - BearerAuth: []
- *     responses:
- *       200:
- *         description: Plan features retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 data:
- *                   type: object
- *                   properties:
- *                     currentPlan:
- *                       type: string
- *                     features:
- *                       type: object
- *                     usage:
- *                       type: object
- *                     limits:
- *                       type: object
- */
+// ==================== PLAN FEATURES ENDPOINT ====================
 router.get('/plan-features', authenticate, getPlanFeatures);
 
 // ==================== BILLING DASHBOARD ROUTES ====================
@@ -276,7 +248,10 @@ router.post('/activate-paid-subscription', authenticate, async (req, res) => {
 // ==================== PAYMENT ROUTES ====================
 router.post('/payment/subscription/initialize', authenticate, initializeSubscription);
 router.post('/payment/credits/initialize', authenticate, initializeCreditPurchase);
-router.get('/payment/verify', verifyPayment);
+
+// CRITICAL FIX: Add both verify routes for frontend callback
+router.get('/payment/verify', verifyPayment);  // Original route
+router.get('/verify', verifyPayment);          // Frontend callback route
 
 // ==================== WEBHOOK ROUTE ====================
 router.post('/webhook/paystack', handleWebhook);
